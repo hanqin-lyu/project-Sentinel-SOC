@@ -32,8 +32,8 @@
 | [time] | Comment added summarising evidence and decision | PB2 / PB6 | [success / failure] |
 | [time] | Tag AutoClosed-LowRisk added | PB2 | [success / failure] |
 | [time] | Incident closed as [classification] | PB2 | [success / failure] |
-| [time] | Low-risk volume count updated by R6 query | R6 | [count of threshold] |
-| [time] | Email sent once the threshold was reached (only if it was) | R6 notification | [sent / not triggered] |
+| [time] | Low-risk volume counted by the R6 query | R6 alert rule | [count of threshold] |
+| [time] | Email sent once the threshold was reached (only if it was) | R6 alert rule and action group | [sent / not triggered] |
 
 Every row must be traceable to a playbook run ID or an incident comment: [run IDs]. No NSG change was made; confirm with the Activity Log: [screenshot].
 
@@ -61,7 +61,7 @@ Keep what the logs show separate from what you conclude. If something could not 
 ## 5. References
 
 - MITRE ATT&CK: T1110.001 Brute Force: Password Guessing, https://attack.mitre.org/techniques/T1110/001/ (add T1110.003 only if password spraying was observed).
-- Sentinel analytics rules: R5 [name and version]; R6 [name and version]. Playbook runs: [run IDs].
+- Sentinel analytics rule: R5 [name and version]. Azure Monitor alert rule: R6 [name], action group [name]. Playbook runs: [run IDs].
 - Microsoft Learn: Automate threat response with playbooks in Microsoft Sentinel, https://learn.microsoft.com/azure/sentinel/automate-responses-with-playbooks
 - Evidence files: [docs/evidence/...].
 
