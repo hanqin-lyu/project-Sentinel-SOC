@@ -42,3 +42,96 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+# ---------------------------------------------------------------------------
+# Terraform (additions)
+# Keep .terraform.lock.hcl in version control so provider versions are pinned.
+# ---------------------------------------------------------------------------
+*.tfplan
+tfplan
+planout
+
+# ---------------------------------------------------------------------------
+# Secrets and credentials (honeypot, Logic Apps, threat-intel APIs)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.ppk
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.kdbx
+secrets.*
+*.secret
+*.secrets.json
+# Local parameter files that may hold API keys, webhook URLs or subscription IDs
+*.parameters.local.json
+*.local.json
+local.settings.json
+# Teams / Logic Apps webhook URLs and API connection exports
+webhook-urls.*
+api-connections.*.json
+
+# ---------------------------------------------------------------------------
+# Azure CLI / tooling state
+# ---------------------------------------------------------------------------
+.azure/
+azureProfile.json
+accessTokens.json
+msal_token_cache.*
+
+# ---------------------------------------------------------------------------
+# Evidence and exports
+# Redacted screenshots go in docs/evidence/. Raw exports can contain real
+# attacker data, subscription/tenant IDs or tokens and must not be committed.
+# ---------------------------------------------------------------------------
+evidence/raw/
+docs/evidence/raw/
+exports/
+*.har
+*.pcap
+*.pcapng
+*.evtx
+auth.log*
+audit.log*
+syslog*
+*.log
+# Raw query result dumps (keep curated KQL in detections/)
+*.results.csv
+*.results.json
+
+# ---------------------------------------------------------------------------
+# Scripts and runtimes
+# ---------------------------------------------------------------------------
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ---------------------------------------------------------------------------
+# Editors, OS and Office
+# ---------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+# Word / Excel / PowerPoint lock and temp files
+~$*
+.~lock.*#
+# Local assistant settings (project deny rules, if added, stay tracked)
+.claude/settings.local.json
