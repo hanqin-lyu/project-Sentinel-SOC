@@ -16,7 +16,7 @@ Exit criteria: budget alert in place (manual, portal), three resource groups, wo
 |---|---|
 | Subscription (name only) | [fill in] |
 | Region | [fill in] |
-| Budget amount and alert thresholds | [fill in] |
+| Budget amount and alert thresholds | SOC-Lab-Budget, USD 20/month, created 2026-11-01 (portal). Alerts: Actual 50%; Forecast 80% and 100%. TODO: add Actual 80% and 100%; scope currently billing account, narrow to subscription or RG-SOC-* |
 | Workspace name, daily cap, retention | [fill in] |
 | Sentinel enabled on (date, UTC) | [fill in] |
 | Free trial ends (31 days later) | [fill in] |
