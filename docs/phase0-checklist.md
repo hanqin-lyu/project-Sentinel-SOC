@@ -1,12 +1,12 @@
 # Phase 0: guardrails and foundation
 
-Exit criteria: budget alert in place, three resource groups, workspace with a daily cap, Sentinel enabled, Defender portal access confirmed, repository conventions in place.
+Exit criteria: budget alert in place (manual, portal), three resource groups, workspace with a daily cap, Sentinel enabled, Defender portal access confirmed, repository conventions in place.
 
 ## Order of work
 
 1. **Budget first, before anything that costs money.** Azure portal, Cost Management, Budgets, create a budget at the subscription scope (or filter to the three `RG-SOC-*` groups). Choose a monthly amount you can accept losing. Add actual-cost alerts at 50%, 80% and 100% to your email, plus a forecast alert if offered. A budget only notifies, it does not stop spending, and emails normally arrive within about an hour of evaluation. Amount chosen: [fill in].
-2. **Resource groups and workspace:** `./infra/phase0.sh` (asks for confirmation on the active subscription). Region defaults to `australiaeast`; override with `LOCATION=...`. Check the Sentinel and Log Analytics pricing page for your region before settling.
-3. **Enable Sentinel, on build day:** `ENABLE_SENTINEL=yes ./infra/phase0.sh`. This starts the 31-day free trial (first 10 GB/day, limited to 20 workspaces per tenant), so run it when you are ready to start the honeypot, not earlier. If the CLI extension syntax has changed, run `az sentinel onboarding-state create --help`, or enable Sentinel in the portal: Microsoft Sentinel, Create, select the workspace, Add.
+2. **Resource groups, network, VM, workspace, DCR:** Terraform in `infra/terraform/` (see its README). Fill in `terraform.tfvars`, then `terraform init && terraform validate && terraform plan`, read the plan, and apply. The first apply keeps `lockdown_egress = false`; flip it to `true` once cloud-init and the agent have finished. Region defaults to `australiaeast`. Check the Sentinel and Log Analytics pricing page for your region before settling.
+3. **Enable Sentinel, on build day:** set `enable_sentinel = true` and apply. This starts the 31-day free trial (first 10 GB/day, limited to 20 workspaces per tenant), so do it when you are ready to start the honeypot, not earlier. Alternatively enable it in the portal: Microsoft Sentinel, Create, select the workspace, Add (then import it into Terraform or leave the flag false).
 4. **Defender portal access.** Open https://security.microsoft.com and confirm Microsoft Sentinel appears. A new Sentinel customer with Owner or User Access Administrator on the subscription is onboarded to the Defender portal automatically. If the workspace does not appear: Settings, Microsoft Sentinel, SIEM workspaces, select the workspace, Connect workspace, set as Primary. A missing role is the usual cause when the workspace or subscription is blank.
 5. **Record what you did** in the table below, with a redacted screenshot under `docs/evidence/`.
 
