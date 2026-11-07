@@ -21,5 +21,6 @@ Logic Apps playbooks for Microsoft Sentinel, kept as code. The aim is no loose s
 | PB4 | Block expiry | Schedule | Remove blocks older than the TTL | [planned] |
 | PB5 | Failure handler | Called on failure | Comment on the incident and notify | [planned] |
 | PB6 | Report draft | After containment | Post a structured comment pre-filled for Summary and Actions Taken | [planned] |
+| PB7 | Notify-router | Incident created (labelled P1–P4) | Send the notification for that priority, write the due time as a comment, re-check at the due time | [planned] |
 
 Automation rules (Sentinel, not Logic Apps) and the R6 alert rule are documented in `docs/` once built.
