@@ -1,13 +1,3 @@
-locals {
-  tags = merge(
-    {
-      project    = "sentinel-soc"
-      managed_by = "terraform"
-    },
-    var.extra_tags
-  )
-}
-
 resource "azurerm_resource_group" "honeypot" {
   name     = var.rg_honeypot_name
   location = var.location

@@ -22,6 +22,18 @@ The budget/cost alert was created manually in the Azure portal and is not manage
 | Out | 100/110/120 | AzureMonitor 443, AzurePlatformDNS, AzurePlatformIMDS | |
 | Out | 4000 | Deny Internet | Only when `lockdown_egress = true` |
 
+## Files
+
+| File | Contents |
+|---|---|
+| `terraform.tf` | Terraform and provider version constraints |
+| `providers.tf` | `azurerm` provider configuration |
+| `variables.tf`, `locals.tf`, `outputs.tf` | Inputs, shared tags, outputs |
+| `main.resource_groups.tf` | The three resource groups |
+| `main.network.tf` | VNet, subnet, NSG and rules, public IP |
+| `main.honeypot_vm.tf` | NIC and the Ubuntu VM (`cloud-init.yaml` as custom data) |
+| `main.sentinel.tf` | Workspace, Sentinel onboarding, DCR, AMA extension, association |
+
 ## Usage
 
 ```bash
