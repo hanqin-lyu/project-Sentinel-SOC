@@ -1,4 +1,4 @@
-# Phase 0: guardrails and foundation
+# Phase 0: guardrails and foundation (day 1 of 14)
 
 Exit criteria: budget alert in place (manual, portal), three resource groups, workspace with a daily cap, Sentinel enabled, Defender portal access confirmed, repository conventions in place.
 
@@ -34,3 +34,12 @@ az monitor log-analytics workspace show -g RG-SOC-Sentinel -n law-soc-sentinel \
 
 - The daily cap is a backstop, not cost control: when it is reached, collection stops for the rest of the day and some overshoot is still billed. In Phase 1, add an alert for the cap being reached (an event is written to the `Operations` table) and one at about 70% of the cap. Filtering belongs in rsyslog, auditd and the DCR transformation.
 - Do not put subscription IDs, tenant IDs or tokens in committed files. Screenshots must be redacted.
+
+## De-risking spikes (day 1, before building)
+
+The 14-day plan depends on these two working, so test them first:
+
+1. **Teams connector:** authorise the Teams connector in a Logic App and post a test Approve/Deny card.
+2. **Managed identity:** a Logic App managed identity with a custom role limited to one NSG can edit one rule, and with VM Contributor (Run Command) on the honeypot can run a harmless command. Record what role each needed.
+
+Also fix the budget: add Actual 80% and 100% alerts, and narrow the scope (see the Record table).
