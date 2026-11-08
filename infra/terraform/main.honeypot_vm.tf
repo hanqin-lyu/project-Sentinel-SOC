@@ -1,3 +1,7 @@
+# The honeypot VM: Ubuntu 24.04 with a key-only admin account and auditd.
+
+# Private IP from the subnet plus the public IP. No NSG here; the subnet NSG
+# applies.
 resource "azurerm_network_interface" "honeypot" {
   name                = "nic-honeypot"
   location            = azurerm_resource_group.honeypot.location
@@ -21,6 +25,8 @@ resource "azurerm_linux_virtual_machine" "honeypot" {
 
   # The admin account uses a key. The weak-password decoy account is created
   # inside the VM by hand later, never in Terraform.
+  # This setting also turns off password login in sshd, so the decoy needs
+  # password login switched back on for that account by hand.
   disable_password_authentication = true
 
   admin_ssh_key {
@@ -46,6 +52,7 @@ resource "azurerm_linux_virtual_machine" "honeypot" {
     version   = "latest"
   }
 
+  # Serial console access if SSH breaks. Uses a managed storage account.
   boot_diagnostics {}
 
   # Installs auditd and logs every command run by real login users.

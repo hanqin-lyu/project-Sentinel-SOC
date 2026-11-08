@@ -1,6 +1,6 @@
 # Terraform: honeypot, Sentinel and automation resource groups
 
-Written but **not yet run or validated**. Run `terraform init`, `terraform validate` and `terraform plan` and read the plan before applying. The budget was created by hand in the portal and is not in this code.
+`terraform fmt` and `terraform validate` pass (azurerm 4.81.0). **Not yet planned or applied.** Run `terraform plan` and read the plan before applying. The budget was created by hand in the portal and is not in this code.
 
 ## What it builds
 
@@ -47,7 +47,7 @@ Commit `.terraform.lock.hcl` after `init`. State and `terraform.tfvars` are git-
 
 ## Done by hand afterwards
 
-1. Create the weak-password decoy account inside the VM.
+1. Create the weak-password decoy account inside the VM, and allow password login for that account only (Terraform turns password login off in sshd).
 2. Move the admin SSH to port 2222. Ubuntu 24.04 starts sshd through a socket, so the port is changed in an `ssh.socket` override. Check with `ss -tlnp`.
 3. Send auditd records to syslog (`local6`).
 4. In the Defender portal, open Sentinel, Content hub, install the **Syslog** solution, open the **Syslog via AMA** connector and create a rule for the VM (facilities `auth`, `authpriv`, `local6`). The connector installs the agent.

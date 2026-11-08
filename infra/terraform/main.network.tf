@@ -1,3 +1,6 @@
+# Isolated network for the honeypot: one VNet, one subnet, one NSG on the
+# subnet and a static public IP. Nothing is peered with any other network.
+
 resource "azurerm_virtual_network" "honeypot" {
   name                = "vnet-honeypot"
   location            = azurerm_resource_group.honeypot.location
@@ -18,11 +21,14 @@ resource "azurerm_network_security_group" "honeypot" {
   resource_group_name = azurerm_resource_group.honeypot.name
 }
 
+# The NSG sits on the subnet, not the NIC, so every rule below is in one place.
 resource "azurerm_subnet_network_security_group_association" "honeypot" {
   subnet_id                 = azurerm_subnet.honeypot.id
   network_security_group_id = azurerm_network_security_group.honeypot.id
 }
 
+# Standard SKU blocks all inbound traffic unless an NSG rule allows it.
+# Static so the address stays the same across VM restarts.
 resource "azurerm_public_ip" "honeypot" {
   name                = "pip-honeypot"
   location            = azurerm_resource_group.honeypot.location
@@ -37,6 +43,7 @@ resource "azurerm_public_ip" "honeypot" {
 #   200  block list, edited by the playbook
 #   300  port 22 open to everyone: this is the honeypot
 # ---------------------------------------------------------------------------
+# Port 2222 is only reachable after sshd is moved there by hand (README step 2).
 resource "azurerm_network_security_rule" "allow_admin_ssh" {
   count                       = var.management_source_cidr == "" ? 0 : 1
   name                        = "Allow-Admin-SSH-From-Mgmt"
@@ -73,6 +80,7 @@ resource "azurerm_network_security_rule" "soar_block" {
   }
 }
 
+# The one port meant to be open to the Internet. Attackers land here.
 resource "azurerm_network_security_rule" "allow_honeypot_ssh" {
   name                        = "Allow-Honeypot-SSH-Any"
   priority                    = 300
@@ -90,6 +98,10 @@ resource "azurerm_network_security_rule" "allow_honeypot_ssh" {
 # ---------------------------------------------------------------------------
 # Outbound rules: only Azure Monitor and Azure's own services may be reached.
 # The "deny all Internet" rule exists only when lockdown_egress = true.
+#   100  Azure Monitor (agent sends logs here)
+#   110  Azure DNS
+#   120  instance metadata service (the agent gets its token here)
+#   4000 deny Internet (Azure's default rule 65001 would otherwise allow it)
 # ---------------------------------------------------------------------------
 resource "azurerm_network_security_rule" "allow_azure_monitor_out" {
   name                        = "Allow-AzureMonitor-Out"

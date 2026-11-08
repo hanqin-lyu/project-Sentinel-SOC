@@ -1,5 +1,6 @@
 output "honeypot_public_ip" {
-  value = azurerm_public_ip.honeypot.ip_address
+  description = "Public IP of the honeypot. Attackers and attacker-sim connect here."
+  value       = azurerm_public_ip.honeypot.ip_address
 }
 
 output "nsg_name" {
@@ -8,5 +9,6 @@ output "nsg_name" {
 }
 
 output "workspace_id" {
-  value = azurerm_log_analytics_workspace.soc.id
+  description = "Resource ID of the Log Analytics workspace with Sentinel."
+  value       = azurerm_log_analytics_workspace.soc.id
 }
