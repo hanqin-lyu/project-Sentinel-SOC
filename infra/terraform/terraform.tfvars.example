@@ -1,12 +1,6 @@
 # Copy to terraform.tfvars (git-ignored) and fill in.
-subscription_id      = "00000000-0000-0000-0000-000000000000"
-admin_ssh_public_key = "ssh-ed25519 AAAA... you@laptop"
-
-# Your public IP as /32 for admin SSH on admin_ssh_port. Empty = no admin rule.
+subscription_id        = "00000000-0000-0000-0000-000000000000"
+admin_ssh_public_key   = "ssh-ed25519 AAAA... you@laptop"
 management_source_cidr = "203.0.113.10/32"
 
-# location        = "australiaeast"
-# vm_size         = "Standard_B2s"
-# enable_sentinel = false   # true starts the 31-day trial
-# lockdown_egress = false   # flip to true after the first apply has finished
-# daily_cap_gb    = 1
+# lockdown_egress = false   # set true after the first apply has finished

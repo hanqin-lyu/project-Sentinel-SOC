@@ -2,7 +2,6 @@ resource "azurerm_network_interface" "honeypot" {
   name                = "nic-honeypot"
   location            = azurerm_resource_group.honeypot.location
   resource_group_name = azurerm_resource_group.honeypot.name
-  tags                = local.tags
 
   ip_configuration {
     name                          = "internal"
@@ -13,25 +12,24 @@ resource "azurerm_network_interface" "honeypot" {
 }
 
 resource "azurerm_linux_virtual_machine" "honeypot" {
-  name                = var.vm_name
-  location            = azurerm_resource_group.honeypot.location
-  resource_group_name = azurerm_resource_group.honeypot.name
-  size                = var.vm_size
-  admin_username      = var.admin_username
-  tags                = local.tags
-
+  name                  = "vm-honeypot-01"
+  location              = azurerm_resource_group.honeypot.location
+  resource_group_name   = azurerm_resource_group.honeypot.name
+  size                  = "Standard_B2s"
+  admin_username        = "azureops"
   network_interface_ids = [azurerm_network_interface.honeypot.id]
 
-  # Key-only admin. The weak-password decoy account is created inside the OS in Phase 1.
+  # The admin account uses a key. The weak-password decoy account is created
+  # inside the VM by hand later, never in Terraform.
   disable_password_authentication = true
 
   admin_ssh_key {
-    username   = var.admin_username
+    username   = "azureops"
     public_key = var.admin_ssh_public_key
   }
 
-  # Identity exists for the agent only. Deliberately NO role assignments on it, so a
-  # compromised honeypot cannot call Azure APIs.
+  # Needed by the monitoring agent. No role is assigned to it on purpose, so a
+  # hacked honeypot cannot call Azure APIs.
   identity {
     type = "SystemAssigned"
   }
@@ -50,5 +48,6 @@ resource "azurerm_linux_virtual_machine" "honeypot" {
 
   boot_diagnostics {}
 
+  # Installs auditd and logs every command run by real login users.
   custom_data = base64encode(file("${path.module}/cloud-init.yaml"))
 }

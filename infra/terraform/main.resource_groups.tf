@@ -1,20 +1,15 @@
 resource "azurerm_resource_group" "honeypot" {
-  name     = var.rg_honeypot_name
+  name     = "RG-SOC-Honeypot"
   location = var.location
-  tags     = local.tags
 }
 
 resource "azurerm_resource_group" "sentinel" {
-  name     = var.rg_sentinel_name
+  name     = "RG-SOC-Sentinel"
   location = var.location
-  tags     = local.tags
 }
 
-# Holds the Logic Apps playbooks (Phase 4). Sentinel's service account gets the
-# "Microsoft Sentinel Automation Contributor" role on this group from the Sentinel
-# playbook-permissions setting, not from here.
+# Empty for now. The Logic Apps playbooks are deployed here later.
 resource "azurerm_resource_group" "automation" {
-  name     = var.rg_automation_name
+  name     = "RG-SOC-Automation"
   location = var.location
-  tags     = local.tags
 }

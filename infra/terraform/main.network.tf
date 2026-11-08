@@ -2,22 +2,20 @@ resource "azurerm_virtual_network" "honeypot" {
   name                = "vnet-honeypot"
   location            = azurerm_resource_group.honeypot.location
   resource_group_name = azurerm_resource_group.honeypot.name
-  address_space       = var.vnet_address_space
-  tags                = local.tags
+  address_space       = ["10.10.0.0/16"]
 }
 
 resource "azurerm_subnet" "honeypot" {
   name                 = "snet-honeypot"
   resource_group_name  = azurerm_resource_group.honeypot.name
   virtual_network_name = azurerm_virtual_network.honeypot.name
-  address_prefixes     = [var.subnet_address_prefix]
+  address_prefixes     = ["10.10.1.0/24"]
 }
 
 resource "azurerm_network_security_group" "honeypot" {
   name                = "nsg-honeypot"
   location            = azurerm_resource_group.honeypot.location
   resource_group_name = azurerm_resource_group.honeypot.name
-  tags                = local.tags
 }
 
 resource "azurerm_subnet_network_security_group_association" "honeypot" {
@@ -31,14 +29,13 @@ resource "azurerm_public_ip" "honeypot" {
   resource_group_name = azurerm_resource_group.honeypot.name
   allocation_method   = "Static"
   sku                 = "Standard"
-  tags                = local.tags
 }
 
 # ---------------------------------------------------------------------------
-# Inbound rules. Lower number = evaluated first.
-#   100  admin SSH from your IP only (optional)
-#   200  SOAR block list, managed by the playbook (Deny)
-#   300  honeypot SSH from anywhere
+# Inbound rules (lower number is checked first)
+#   100  admin SSH on port 2222, from your IP only
+#   200  block list, edited by the playbook
+#   300  port 22 open to everyone: this is the honeypot
 # ---------------------------------------------------------------------------
 resource "azurerm_network_security_rule" "allow_admin_ssh" {
   count                       = var.management_source_cidr == "" ? 0 : 1
@@ -48,16 +45,16 @@ resource "azurerm_network_security_rule" "allow_admin_ssh" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = tostring(var.admin_ssh_port)
+  destination_port_range      = "2222"
   source_address_prefix       = var.management_source_cidr
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.honeypot.name
   network_security_group_name = azurerm_network_security_group.honeypot.name
 }
 
-# The playbook (PB2) rewrites source_address_prefixes at run time. Terraform creates the
-# rule with a harmless placeholder (documentation range, TEST-NET-1) and then leaves the
-# list alone, so a later apply never removes live blocks.
+# The playbook rewrites the address list. Terraform only creates the rule with a
+# dummy address (192.0.2.1 is a documentation range) and then ignores the list,
+# so a later apply never wipes real blocks.
 resource "azurerm_network_security_rule" "soar_block" {
   name                        = "SOAR-Block-Attackers"
   priority                    = 200
@@ -91,8 +88,8 @@ resource "azurerm_network_security_rule" "allow_honeypot_ssh" {
 }
 
 # ---------------------------------------------------------------------------
-# Outbound rules. The default AllowInternetOutBound rule (65001) is overridden by an
-# explicit Internet deny at 4000, created only when lockdown_egress = true.
+# Outbound rules: only Azure Monitor and Azure's own services may be reached.
+# The "deny all Internet" rule exists only when lockdown_egress = true.
 # ---------------------------------------------------------------------------
 resource "azurerm_network_security_rule" "allow_azure_monitor_out" {
   name                        = "Allow-AzureMonitor-Out"
@@ -108,8 +105,6 @@ resource "azurerm_network_security_rule" "allow_azure_monitor_out" {
   network_security_group_name = azurerm_network_security_group.honeypot.name
 }
 
-# Platform DNS / WireServer (168.63.129.16) and instance metadata (169.254.169.254):
-# needed by the VM agent, name resolution and the managed identity the agent uses.
 resource "azurerm_network_security_rule" "allow_platform_dns_out" {
   name                        = "Allow-AzurePlatformDNS-Out"
   priority                    = 110
@@ -151,12 +146,4 @@ resource "azurerm_network_security_rule" "deny_internet_out" {
   destination_address_prefix  = "Internet"
   resource_group_name         = azurerm_resource_group.honeypot.name
   network_security_group_name = azurerm_network_security_group.honeypot.name
-
-  # If both happen in one apply, lock down only after the agent and the collection
-  # association exist. cloud-init finishes asynchronously, so the two-stage apply in the
-  # README is still the safe path.
-  depends_on = [
-    azurerm_virtual_machine_extension.ama,
-    azurerm_monitor_data_collection_rule_association.syslog,
-  ]
 }

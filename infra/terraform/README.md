@@ -1,64 +1,55 @@
 # Terraform: honeypot, Sentinel and automation resource groups
 
-> **Status: written locally, not yet validated or applied.** Run `terraform init && terraform validate && terraform plan` and read the plan before any apply.
+Written but **not yet run or validated**. Run `terraform init`, `terraform validate` and `terraform plan` and read the plan before applying. The budget was created by hand in the portal and is not in this code.
 
-The budget/cost alert was created manually in the Azure portal and is not managed here.
+## What it builds
 
-## What it creates
-
-| Group (default name) | Resources |
+| Resource group | Contents |
 |---|---|
-| `RG-SOC-Honeypot` | VNet + subnet, NSG (attached to subnet), static public IP, NIC, Ubuntu 24.04 VM (SSH-key admin, system-assigned identity with no roles), cloud-init installing auditd + execve rule |
-| `RG-SOC-Sentinel` | Log Analytics workspace (cap + 90-day retention), Sentinel onboarding (off by default), DCR `dcr-honeypot-syslog` with ingestion-time `transform_kql`, AMA extension, DCR association |
-| `RG-SOC-Automation` | Empty group for Logic Apps playbooks (Phase 4) |
-
-## NSG rule layout
-
-| Dir | Priority | Rule | Notes |
-|---|---|---|---|
-| In | 100 | Allow admin port from `management_source_cidr` | Skipped if empty |
-| In | 200 | `SOAR-Block-Attackers` (Deny) | Placeholder `192.0.2.1`; PB2 edits it; `ignore_changes` keeps Terraform from undoing live blocks |
-| In | 300 | Allow TCP 22 from anywhere | The honeypot |
-| Out | 100/110/120 | AzureMonitor 443, AzurePlatformDNS, AzurePlatformIMDS | |
-| Out | 4000 | Deny Internet | Only when `lockdown_egress = true` |
+| `RG-SOC-Honeypot` | Network (VNet, subnet, NSG, public IP) and an Ubuntu 24.04 VM with auditd |
+| `RG-SOC-Sentinel` | Log Analytics workspace with Sentinel turned on (starts the 31-day free trial) |
+| `RG-SOC-Automation` | Empty. The playbooks go here later |
 
 ## Files
 
-| File | Contents |
+| File | What it holds |
 |---|---|
-| `terraform.tf` | Terraform and provider version constraints |
-| `providers.tf` | `azurerm` provider configuration |
-| `variables.tf`, `locals.tf`, `outputs.tf` | Inputs, shared tags, outputs |
+| `terraform.tf`, `providers.tf` | Version requirements and the Azure provider |
+| `variables.tf`, `outputs.tf` | The 5 inputs and 3 outputs |
 | `main.resource_groups.tf` | The three resource groups |
-| `main.network.tf` | VNet, subnet, NSG and rules, public IP |
-| `main.honeypot_vm.tf` | NIC and the Ubuntu VM (`cloud-init.yaml` as custom data) |
-| `main.sentinel.tf` | Workspace, Sentinel onboarding, DCR, AMA extension, association |
+| `main.network.tf` | VNet, subnet, NSG with its rules, public IP |
+| `main.honeypot_vm.tf` | Network card and the VM (`cloud-init.yaml` installs auditd) |
+| `main.sentinel.tf` | Workspace and the Sentinel switch |
 
-## Usage
+## NSG rules
+
+| Direction | Priority | Rule |
+|---|---|---|
+| In | 100 | Admin SSH on port 2222 from your IP only |
+| In | 200 | `SOAR-Block-Attackers`: Deny. Holds a dummy address; the playbook edits it |
+| In | 300 | Port 22 open to everyone (the honeypot) |
+| Out | 100–120 | Allow Azure Monitor, Azure DNS and the metadata service |
+| Out | 4000 | Deny the rest of the Internet, only when `lockdown_egress = true` |
+
+## Use
 
 ```bash
 az login
-cp terraform.tfvars.example terraform.tfvars   # fill in values
+cp terraform.tfvars.example terraform.tfvars   # fill in the values
 terraform init
-terraform validate
-terraform plan -out tfplan
-terraform apply tfplan
+terraform plan
+terraform apply
 ```
 
-Commit `.terraform.lock.hcl` after `init`. State, `tfvars` and plan files are git-ignored.
+Commit `.terraform.lock.hcl` after `init`. State and `terraform.tfvars` are git-ignored.
 
-### Two-stage apply (egress lockdown)
-1. First apply with `lockdown_egress = false` so cloud-init (apt) and the AMA extension can download.
-2. Check cloud-init finished (`cloud-init status`) and the DCR association shows in the portal.
-3. Set `lockdown_egress = true` and apply again.
+**Apply twice.** First with `lockdown_egress = false` so the VM can download packages and the connector can install the agent. Once logs are arriving, set it to `true` and apply again. Apply on build day, because Sentinel is turned on by the first apply.
 
-## Manual steps that stay outside Terraform (Phase 1)
-- Add the weak-password decoy account inside the OS (never in Terraform or tfvars).
-- Move the admin sshd to `admin_ssh_port`. On Ubuntu 24.04 sshd is socket-activated, so an `ssh.socket` override is needed; check with `ss -tlnp`. Cloud images also ship `60-cloudimg-settings.conf` that disables password auth, which the decoy needs overridden.
-- Forward auditd records to syslog (`local6`) so the DCR picks them up.
-- Verify rows arrive in `Syslog` before enabling Sentinel (`enable_sentinel = true` starts the 31-day trial clock).
+## Done by hand afterwards
 
-## Notes
-- Provider pinned `~> 4.0`; 4.x needs `subscription_id` (set via variable).
-- Setting `syslog_transform_kql = "source"` disables filtering, useful while baselining.
-- Region/VM-size availability varies by subscription; change `location` / `vm_size` if creation fails.
+1. Create the weak-password decoy account inside the VM.
+2. Move the admin SSH to port 2222. Ubuntu 24.04 starts sshd through a socket, so the port is changed in an `ssh.socket` override. Check with `ss -tlnp`.
+3. Send auditd records to syslog (`local6`).
+4. In the Defender portal, open Sentinel, Content hub, install the **Syslog** solution, open the **Syslog via AMA** connector and create a rule for the VM (facilities `auth`, `authpriv`, `local6`). The connector installs the agent.
+5. Check rows appear in the `Syslog` table.
+6. Set `lockdown_egress = true` and apply again.
