@@ -69,6 +69,9 @@ jobs:
 
       # Downloads the AVM modules so their resources are scanned too.
       # Honeypot-by-design findings are skipped inline with a reason.
+      # CKV_TF_1 (module source must be a git commit hash) is skipped: AVM
+      # modules come from the Terraform Registry pinned to an exact version, and
+      # the modules nested inside AVM cannot be changed or skipped inline.
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
         with:
@@ -76,6 +79,7 @@ jobs:
           framework: terraform
           download_external_modules: true
           soft_fail: false
+          skip_check: CKV_TF_1
 
       - name: Terraform plan
         run: terraform plan -input=false -no-color -out=tfplan
