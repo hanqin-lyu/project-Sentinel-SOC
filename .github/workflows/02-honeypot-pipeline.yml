@@ -1,0 +1,161 @@
+# Stack 02: honeypot network, NSG and VM. Needs stack 01 (the DCR) applied first.
+# Same pattern as project-IaC-Azconfig:
+#   pull request  -> CI identity (read-only): fmt, validate, Checkov, plan
+#   push to main  -> CI identity plans; the owner reads the plan and approves
+#                    the "production-demo" environment; CD identity (read-write)
+#                    applies that plan
+# Order across stacks: 01 Sentinel, 02 honeypot, 03 automation.
+# A push that only changes this workflow file does not apply anything; the
+# workflow file still triggers CI on a pull request.
+name: 02 Honeypot
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "02-infrastructure-honeypot/**"
+      - ".github/workflows/02-honeypot-pipeline.yml"
+  push:
+    branches: [main]
+    paths:
+      - "02-infrastructure-honeypot/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# One run per stack at a time, so two runs never wait on the same state lock.
+concurrency:
+  group: honeypot-tfstate
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: 02-infrastructure-honeypot
+
+env:
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  BACKEND_CONFIG: >-
+    -backend-config=resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}
+    -backend-config=storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+    -backend-config=container_name=${{ vars.TFSTATE_CONTAINER }}
+  TF_VAR_admin_ssh_public_key: ${{ vars.ADMIN_SSH_PUBLIC_KEY }}
+  TF_VAR_management_source_cidr: ${{ secrets.MANAGEMENT_SOURCE_CIDR }}
+
+jobs:
+  ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CI_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_CI_TENANT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false $BACKEND_CONFIG
+
+      - name: Terraform validate
+        run: terraform validate
+
+      # Downloads the AVM modules so their resources are scanned too.
+      # Honeypot-by-design findings are skipped inline with a reason.
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: 02-infrastructure-honeypot
+          framework: terraform
+          download_external_modules: true
+          soft_fail: false
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Plan to job summary
+        run: |
+          {
+            echo '### Plan: 02 Honeypot'
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Plan on main with the read-only CI identity. The plan is shown in the job
+  # summary and kept as an artifact, so the owner reads it before approving.
+  cd-plan:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CI_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_CI_TENANT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false $BACKEND_CONFIG
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Plan to job summary
+        run: |
+          {
+            echo '### Plan to apply: 02 Honeypot'
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The plan file can hold input values in clear text, so it is kept for
+      # one day only.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-honeypot
+          path: 02-infrastructure-honeypot/tfplan
+          retention-days: 1
+
+  # Manual review: this job waits until the owner, the required reviewer of
+  # the "production-demo" environment, approves it. Then the CD identity applies
+  # exactly the plan the owner read. Terraform refuses the plan if the state
+  # changed in between.
+  cd-apply:
+    needs: cd-plan
+    runs-on: ubuntu-latest
+    environment: production-demo
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CD_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_CD_TENANT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-honeypot
+          path: 02-infrastructure-honeypot
+
+      - name: Terraform init
+        run: terraform init -input=false $BACKEND_CONFIG
+
+      - name: Terraform apply
+        run: terraform apply -input=false -no-color tfplan

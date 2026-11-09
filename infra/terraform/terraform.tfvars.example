@@ -1,6 +1,0 @@
-# Copy to terraform.tfvars (git-ignored) and fill in.
-subscription_id        = "00000000-0000-0000-0000-000000000000"
-admin_ssh_public_key   = "ssh-ed25519 AAAA... you@laptop"
-management_source_cidr = "203.0.113.10/32"
-
-# lockdown_egress = false   # set true after the first apply has finished
