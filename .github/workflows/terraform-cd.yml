@@ -1,0 +1,104 @@
+# CD for all Terraform stacks. Same design as project-IaC-Azconfig: a merge to
+# main creates a deployment request for the "production-demo" environment. After
+# the owner approves it, the read-write CD identity applies the stack the merge
+# changed. The plan was reviewed on the pull request (terraform-ci.yml).
+name: Terraform CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "01-sentinel-core/terraform/**"
+      - "02-infrastructure-honeypot/**"
+      - "03-automation-soar/terraform/**"
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: Stack to apply
+        type: choice
+        options:
+          - 01-sentinel-core/terraform
+          - 02-infrastructure-honeypot
+          - 03-automation-soar/terraform
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # Finds the one stack this merge changed, or takes the one picked by hand.
+  detect:
+    name: "Detect stack"
+    runs-on: ubuntu-latest
+    outputs:
+      dir: ${{ steps.pick.outputs.dir }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_STACK: ${{ inputs.stack }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "dir=$INPUT_STACK" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+          found=""
+          for dir in 01-sentinel-core/terraform 02-infrastructure-honeypot 03-automation-soar/terraform; do
+            if printf '%s\n' "$changed" | grep -q "^$dir/"; then
+              found="$found $dir"
+            fi
+          done
+          set -- $found
+          if [ "$#" -gt 1 ]; then
+            echo "::error::One stack per merge. This change touches:$found"
+            exit 1
+          fi
+          echo "Stack: ${1:-none}"
+          echo "dir=${1:-}" >> "$GITHUB_OUTPUT"
+
+  terraform-apply:
+    name: "Terraform Apply"
+    needs: detect
+    if: needs.detect.outputs.dir != ''
+    runs-on: ubuntu-latest
+    # Manual approval gate: Required reviewers on this environment in GitHub.
+    # The CD identity's federated credential only matches this environment.
+    environment: production-demo
+    # Serialise runs against the same state; never cancel an in-flight apply.
+    concurrency:
+      group: terraform-${{ needs.detect.outputs.dir }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ needs.detect.outputs.dir }}
+    env:
+      TF_IN_AUTOMATION: "true"
+      ARM_USE_OIDC: "true"
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CD_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_CD_TENANT_ID }}
+      BACKEND_CONFIG: >-
+        -backend-config=resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}
+        -backend-config=storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+        -backend-config=container_name=${{ vars.TFSTATE_CONTAINER }}
+      TF_VAR_admin_ssh_public_key: ${{ vars.ADMIN_SSH_PUBLIC_KEY }}
+      TF_VAR_management_source_cidr: ${{ secrets.MANAGEMENT_SOURCE_CIDR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false $BACKEND_CONFIG
+
+      - name: Terraform apply
+        run: terraform apply -input=false -no-color -auto-approve
