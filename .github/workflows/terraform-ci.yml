@@ -1,0 +1,173 @@
+# CI for all Terraform stacks. Same design as project-IaC-Azconfig: runs on a
+# pull request with the read-only CI identity. A PR is merged only after this
+# passes; the merge then starts terraform-cd.yml.
+# One stack per pull request, merged in order 01, 02, 03.
+name: Terraform CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "01-sentinel-core/terraform/**"
+      - "02-infrastructure-honeypot/**"
+      - "03-automation-soar/terraform/**"
+      - ".github/workflows/terraform-ci.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CI_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_CI_TENANT_ID }}
+  BACKEND_CONFIG: >-
+    -backend-config=resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}
+    -backend-config=storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+    -backend-config=container_name=${{ vars.TFSTATE_CONTAINER }}
+  # Inputs of stack 02. Terraform ignores them in stacks that do not declare them.
+  TF_VAR_admin_ssh_public_key: ${{ vars.ADMIN_SSH_PUBLIC_KEY }}
+  TF_VAR_management_source_cidr: ${{ secrets.MANAGEMENT_SOURCE_CIDR }}
+
+jobs:
+  # Finds the one stack this pull request changes. Empty when it changes only
+  # this workflow file; then only the secret scan runs.
+  detect:
+    name: "Detect stack"
+    runs-on: ubuntu-latest
+    outputs:
+      dir: ${{ steps.pick.outputs.dir }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE...$HEAD")
+          found=""
+          for dir in 01-sentinel-core/terraform 02-infrastructure-honeypot 03-automation-soar/terraform; do
+            if printf '%s\n' "$changed" | grep -q "^$dir/"; then
+              found="$found $dir"
+            fi
+          done
+          set -- $found
+          if [ "$#" -gt 1 ]; then
+            echo "::error::One stack per pull request. This change touches:$found"
+            exit 1
+          fi
+          echo "Stack: ${1:-none}"
+          echo "dir=${1:-}" >> "$GITHUB_OUTPUT"
+
+  fmt-and-validate:
+    name: "Terraform Format & Validate"
+    needs: detect
+    if: needs.detect.outputs.dir != ''
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ needs.detect.outputs.dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false $BACKEND_CONFIG
+
+      - name: Terraform validate
+        run: terraform validate
+
+  checkov-scan:
+    name: "Pre-deployment Security Scan (Checkov)"
+    needs: detect
+    if: needs.detect.outputs.dir != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ needs.detect.outputs.dir }}
+          framework: terraform,secrets
+          # AVM resources live inside registry modules; without this Checkov
+          # only sees the module call arguments.
+          download_external_modules: true
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          soft_fail: false
+          # Skipped checks, each with a reason:
+          # CKV_TF_1 - module sources are Terraform Registry versions, not git
+          #            commit hashes; the modules nested inside AVM cannot be
+          #            changed or skipped inline.
+          # Honeypot-by-design findings are skipped inline in stack 02.
+          skip_check: CKV_TF_1
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: success() || failure()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+  secret-scan:
+    name: "Secret Scan (gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scans the checked-out files (not just the PR diff), so secrets already
+      # in the repo are found too. Exit code 1 = leaks found.
+      - name: Run gitleaks on working tree
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 \
+            dir /repo --config /repo/.gitleaks.toml --redact --verbose
+
+  terraform-plan:
+    name: "Terraform Plan Preview"
+    needs: [detect, fmt-and-validate, checkov-scan, secret-scan]
+    runs-on: ubuntu-latest
+    # Same group as CD, so plan and apply never contend for the state lock.
+    concurrency:
+      group: terraform-${{ needs.detect.outputs.dir }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ needs.detect.outputs.dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false $BACKEND_CONFIG
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Plan to job summary
+        env:
+          STACK: ${{ needs.detect.outputs.dir }}
+        run: |
+          {
+            echo "### Plan: $STACK"
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

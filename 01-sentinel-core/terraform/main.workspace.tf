@@ -22,4 +22,9 @@ module "workspace" {
   # in this lab, so both stay on the public endpoint.
   log_analytics_workspace_internet_ingestion_enabled = "true"
   log_analytics_workspace_internet_query_enabled     = "true"
+
+  # No shared-key access. The agent and the portal use Entra ID; nothing here
+  # needs the workspace keys. (The AVM description of this input reads the
+  # other way round; it maps to azurerm local_authentication_enabled.)
+  log_analytics_workspace_local_authentication_enabled = false
 }

@@ -1,0 +1,12 @@
+title = "project-Sentinel-SOC gitleaks config"
+
+[extend]
+useDefault = true
+
+# Default rules miss low-entropy passwords; catch hardcoded defaults on Terraform variables named *password*
+[[rules]]
+id = "terraform-password-default"
+description = "Hardcoded password in Terraform"
+regex = '''(?is)variable\s+"[a-z_]*(password|passwd|pwd)[a-z_]*"\s*\{[^}]*?default\s*=\s*"[^"\s]{6,}"'''
+path = '''\.tf$'''
+keywords = ["password", "passwd", "pwd"]

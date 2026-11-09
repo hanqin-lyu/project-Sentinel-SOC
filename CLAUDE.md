@@ -22,7 +22,7 @@ A solo portfolio project. An Azure SSH honeypot feeds Microsoft Sentinel (used i
 
 ## Layout
 
-- `.github/workflows/`: one pipeline per stack (PR: CI identity, fmt, validate, Checkov, plan; main: CD identity, approved apply)
+- `.github/workflows/`: `terraform-ci.yml` (PR, CI identity: fmt, validate, Checkov, gitleaks, plan) and `terraform-cd.yml` (merge to main, CD identity: apply after the owner approves `production-demo`). Both pick the one stack a change touches
 - `01-sentinel-core/terraform/`: workspace, Sentinel, syslog DCR. Analytics rules, watchlist and workbook go in `01-sentinel-core/` when built
 - `02-infrastructure-honeypot/`: network, NSG, VM, AMA, DCR link; `scripts/honeypot-setup.sh` runs on first boot
 - `03-automation-soar/`: automation resource group now; playbooks and automation rules when built. `README.md` is the playbook index
