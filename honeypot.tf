@@ -235,8 +235,9 @@ module "vm" {
   location            = local.location
   resource_group_name = data.azurerm_resource_group.honeypot.name
   os_type             = "Linux"
-  # Same 2 vCPU and 4 GB as B2s, which has no capacity in this region.
-  sku_size         = "Standard_B2als_v2"
+  # Arm64, 2 vCPU, 1 GB. Covered by the subscription's free VM hours. Needs the
+  # Arm64 image below.
+  sku_size         = "Standard_B2pts_v2"
   enable_telemetry = false
 
   # One VM, no need to pin an availability zone.
@@ -274,7 +275,7 @@ module "vm" {
   source_image_reference = {
     publisher = "Canonical"
     offer     = "ubuntu-24_04-lts"
-    sku       = "server"
+    sku       = "server-arm64"
     version   = "latest"
   }
 
