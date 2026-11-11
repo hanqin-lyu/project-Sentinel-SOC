@@ -63,10 +63,10 @@ module "pip" {
 #   In  200   SOAR-Block-Attackers, edited by the playbook (separate resource below)
 #   In  300   port 22 open to everyone: this is the honeypot
 #   Out 100   Azure Monitor (the agent sends logs here)
-#   Out 110   Azure DNS
-#   Out 120   instance metadata service (the agent gets its token here)
 #   Out 4000  deny Internet, only when lockdown_egress = true
 #             (Azure's default rule 65001 would otherwise allow it)
+# Azure DNS and the metadata service need no rule: NSGs do not filter them, and
+# their service tags accept Deny only.
 # ---------------------------------------------------------------------------
 locals {
   egress_lockdown_rule = local.lockdown_egress ? {
@@ -106,28 +106,6 @@ locals {
       destination_port_range     = "443"
       source_address_prefix      = "*"
       destination_address_prefix = "AzureMonitor"
-    }
-    allow_platform_dns_out = {
-      name                       = "Allow-AzurePlatformDNS-Out"
-      priority                   = 110
-      direction                  = "Outbound"
-      access                     = "Allow"
-      protocol                   = "*"
-      source_port_range          = "*"
-      destination_port_range     = "*"
-      source_address_prefix      = "*"
-      destination_address_prefix = "AzurePlatformDNS"
-    }
-    allow_platform_imds_out = {
-      name                       = "Allow-AzurePlatformIMDS-Out"
-      priority                   = 120
-      direction                  = "Outbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "80"
-      source_address_prefix      = "*"
-      destination_address_prefix = "AzurePlatformIMDS"
     }
   }
 }
@@ -257,8 +235,9 @@ module "vm" {
   location            = local.location
   resource_group_name = data.azurerm_resource_group.honeypot.name
   os_type             = "Linux"
-  sku_size            = "Standard_B2s"
-  enable_telemetry    = false
+  # Same 2 vCPU and 4 GB as B2s, which has no capacity in this region.
+  sku_size         = "Standard_B2als_v2"
+  enable_telemetry = false
 
   # One VM, no need to pin an availability zone.
   zone = null
