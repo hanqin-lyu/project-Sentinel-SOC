@@ -432,3 +432,98 @@ resource "azurerm_sentinel_alert_rule_scheduled" "r5_sustained_brute_force" {
 
   depends_on = [azurerm_sentinel_watchlist.trusted_ips]
 }
+
+# ---------------------------------------------------------------------------
+# SOAR block log
+# ---------------------------------------------------------------------------
+# PB5 writes one row per block and PB6 one row per unblock, through the Logs
+# Ingestion API. PB6 finds expired blocks with KQL, and the workbook reads the
+# same table. The NSG rule is still what blocks; this table is the record.
+resource "azurerm_log_analytics_workspace_table_custom_log" "soar_blocks" {
+  name         = "SOARBlocks_CL"
+  workspace_id = module.workspace.resource_id
+  description  = "Blocks and unblocks on the honeypot NSG, written by PB5 and PB6."
+
+  column {
+    name = "TimeGenerated"
+    type = "dateTime"
+  }
+  column {
+    name = "IPAddress"
+    type = "string"
+  }
+  column {
+    name        = "Action"
+    type        = "string"
+    description = "Block or Unblock"
+  }
+  column {
+    name = "ExpiresAt"
+    type = "dateTime"
+  }
+  column {
+    name = "IncidentArmId"
+    type = "string"
+  }
+  column {
+    name = "Playbook"
+    type = "string"
+  }
+}
+
+# The playbooks post rows to this endpoint. A DCR can carry its own ingestion
+# endpoint only with kind "Direct", which the AVM DCR module does not accept,
+# so the endpoint is a separate resource.
+module "dce_soar" {
+  source  = "Azure/avm-res-insights-datacollectionendpoint/azurerm"
+  version = "0.2.0"
+
+  name             = "dce-soar"
+  location         = local.location
+  parent_id        = data.azurerm_resource_group.sentinel.id
+  enable_telemetry = false
+}
+
+# Maps the posted JSON to the table. The stream columns match the table, so
+# the transform passes rows through unchanged. PB5 and PB6 have Monitoring
+# Metrics Publisher on this DCR only (soar.tf).
+module "dcr_soar_blocks" {
+  source  = "Azure/avm-res-insights-datacollectionrule/azurerm"
+  version = "0.1.0"
+
+  name                        = "dcr-soar-blocks"
+  location                    = local.location
+  parent_id                   = data.azurerm_resource_group.sentinel.id
+  data_collection_endpoint_id = module.dce_soar.resource_id
+  enable_telemetry            = false
+
+  stream_declarations = {
+    "Custom-SOARBlocks_CL" = {
+      columns = [
+        { name = "TimeGenerated", type = "datetime" },
+        { name = "IPAddress", type = "string" },
+        { name = "Action", type = "string" },
+        { name = "ExpiresAt", type = "datetime" },
+        { name = "IncidentArmId", type = "string" },
+        { name = "Playbook", type = "string" },
+      ]
+    }
+  }
+
+  destinations = {
+    log_analytics = [{
+      name                  = "law-soc-sentinel"
+      workspace_resource_id = module.workspace.resource_id
+    }]
+  }
+
+  data_flows = [{
+    streams       = ["Custom-SOARBlocks_CL"]
+    destinations  = ["law-soc-sentinel"]
+    transform_kql = "source"
+    output_stream = "Custom-SOARBlocks_CL"
+  }]
+
+  # The table must exist before a DCR can send to it.
+  depends_on = [azurerm_log_analytics_workspace_table_custom_log.soar_blocks]
+}
