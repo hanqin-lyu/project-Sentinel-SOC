@@ -4,8 +4,8 @@ Structured incident reports in a fixed format: Summary, Actions Taken, Findings,
 
 | Report | Scenario |
 |---|---|
-| [TR-001](TR-001-incident-a-bruteforce-low-risk.md) | Incident A: sustained brute force, low threat score, no block, automatic closure, recorded and counted |
-| [TR-002](TR-002-incident-b-high-severity-compromise.md) | Incident B: successful compromise, `wget` download attempt, approval card, forced session termination |
+| [TR-001](TR-001-incident-a-bruteforce-low-risk.md) | Incident A (P3): sustained brute force, no login, no block, daily review, closed by the analyst |
+| [TR-002](TR-002-incident-b-high-severity-compromise.md) | Incident B (P1): successful compromise, `wget` download attempt, automatic block, analyst-run session termination |
 
 Conventions: timestamps in UTC with AEDT alongside; IPs and URLs defanged (`203[.]0[.]113[.]10`, `hxxp://`); every finding tied to a query or a redacted screenshot in `docs/evidence/`; findings separate evidence from inference and state confidence.
 
