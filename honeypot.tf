@@ -59,7 +59,7 @@ module "pip" {
 
 # ---------------------------------------------------------------------------
 # NSG rules (lower number is checked first)
-#   In  100   admin SSH on port 2222, from the owner's IP only
+#   In  100   admin SSH on port 2222, from the owner's IP only (separate resource below)
 #   In  200   SOAR-Block-Attackers, edited by the playbook (separate resource below)
 #   In  300   port 22 open to everyone: this is the honeypot
 #   Out 100   Azure Monitor (the agent sends logs here)
@@ -69,22 +69,6 @@ module "pip" {
 #             (Azure's default rule 65001 would otherwise allow it)
 # ---------------------------------------------------------------------------
 locals {
-  # for_each cannot use a sensitive map; only "is it set" is revealed.
-  admin_rule = nonsensitive(var.management_source_cidr == "") ? {} : {
-    # Reachable only after sshd also listens on 2222 (manual step, README).
-    allow_admin_ssh = {
-      name                       = "Allow-Admin-SSH-From-Mgmt"
-      priority                   = 100
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "2222"
-      source_address_prefix      = var.management_source_cidr
-      destination_address_prefix = "*"
-    }
-  }
-
   egress_lockdown_rule = local.lockdown_egress ? {
     deny_internet_out = {
       name                       = "Deny-Internet-Out"
@@ -161,7 +145,7 @@ module "nsg" {
   parent_id        = data.azurerm_resource_group.honeypot.id
   enable_telemetry = false
 
-  security_rules = merge(local.static_rules, local.admin_rule, local.egress_lockdown_rule)
+  security_rules = merge(local.static_rules, local.egress_lockdown_rule)
 }
 
 # The playbook rewrites this rule's address list, so it is not part of the
@@ -185,6 +169,26 @@ resource "azurerm_network_security_rule" "soar_block" {
   lifecycle {
     ignore_changes = [source_address_prefixes]
   }
+}
+
+# The owner's IP is sensitive, and the module runs for_each over its rule map,
+# which cannot hold a sensitive value. So this rule is a separate resource too.
+# Reachable only after sshd also listens on 2222 (manual step, README).
+resource "azurerm_network_security_rule" "admin_ssh" {
+  # count cannot use a sensitive value; only "is it set" is revealed.
+  count = nonsensitive(var.management_source_cidr == "") ? 0 : 1
+
+  name                        = "Allow-Admin-SSH-From-Mgmt"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "2222"
+  source_address_prefix       = var.management_source_cidr
+  destination_address_prefix  = "*"
+  resource_group_name         = data.azurerm_resource_group.honeypot.name
+  network_security_group_name = module.nsg.name
 }
 
 # ---------------------------------------------------------------------------
