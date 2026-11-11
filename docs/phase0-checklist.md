@@ -48,7 +48,7 @@ Done when: budget alerts set, the Terraform is applied through the pipeline, Def
 |---|---|
 | Region | australiaeast |
 | Budget | SOC-Lab-Budget, USD 20/month. TODO: Actual 80% and 100% alerts, narrower scope |
-| Sentinel enabled on (UTC) | [fill in] |
-| Free trial ends (+31 days) | [fill in] |
+| Sentinel enabled on (UTC) | 2026-11-11 03:42 |
+| Free trial ends (+31 days) | 2026-12-12 |
 | Defender portal access | [yes / no] |
 | Policy exemption on rg-lab-honeypot | needed, applied (`exempt-honeypot-open-ssh`, Waiver, no expiry) |
