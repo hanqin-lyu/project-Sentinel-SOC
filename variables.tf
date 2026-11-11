@@ -17,3 +17,8 @@ variable "management_source_cidr" {
   # Hidden in plan output, which is posted to the PR job summary.
   sensitive = true
 }
+
+variable "sentinel_automation_principal_id" {
+  description = "Object ID of Sentinel's service account (Azure Security Insights) in this tenant. GitHub variable SENTINEL_AUTOMATION_PRINCIPAL_ID."
+  type        = string
+}
