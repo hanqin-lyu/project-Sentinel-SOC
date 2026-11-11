@@ -20,8 +20,24 @@ terraform {
   # passes the account, resource group and container with -backend-config.
   # Local checks use `terraform init -backend=false`.
   backend "azurerm" {
-    key              = "sentinel.tfstate"
+    key              = "soc.tfstate"
     use_oidc         = true
     use_azuread_auth = true
   }
+}
+
+# Both providers sign in with GitHub OIDC. Subscription, tenant and client IDs
+# come from the ARM_* environment variables set by the workflow, so no ID is
+# written in this repo.
+# The pipeline has no subscription-level rights, so resource providers are
+# registered by hand (see docs/phase0-checklist.md).
+provider "azurerm" {
+  features {}
+  use_oidc                        = true
+  resource_provider_registrations = "none"
+}
+
+provider "azapi" {
+  use_oidc                   = true
+  skip_provider_registration = true
 }

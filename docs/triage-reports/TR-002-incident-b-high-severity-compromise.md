@@ -6,8 +6,9 @@
 |---|---|
 | Report ID | TR-002 |
 | Incident | [Sentinel incident number and title] |
-| Scenario | Successful brute force, `wget` download attempt, approval card, forced session termination |
-| Severity / Status | [High] / [Closed or Active] |
+| Scenario | Successful brute force, `wget` download attempt, automatic IP block, analyst-run session termination |
+| Rule | R2 Compromise after brute force |
+| Priority / Severity / Status | P1 / [High] / [Closed or Active] |
 | Classification | [True Positive – Suspicious Activity] |
 | Detected | [UTC time] · [AEDT time] |
 | Contained | [UTC time] · [AEDT time] |
@@ -18,30 +19,28 @@
 
 ## 1. Summary
 
-[Two to four sentences, readable by a non-technical reader. Example structure: On [date], [host] recorded a successful SSH login for [account] from [defanged IP] after [N] failed attempts. The attacker then ran [command] to fetch a file from [defanged URL]. The playbook added a time-limited network block at [time]. An analyst approved session termination and account lock at [time] through the [Teams / email] approval card. Status: [contained / pending review].]
+[Two to four sentences, readable by a non-technical reader. Example structure: On [date], [host] recorded a successful SSH login for [account] from [defanged IP] after [N] failed attempts. The attacker then ran [command] to fetch a file from [defanged URL]. The playbook added a time-limited network block at [time]. The analyst ran the Contain host playbook at [time], which ended the session and locked the account. Status: [contained / pending review].]
 
 ## 2. Actions Taken
 
 | Time (UTC) | Action | Performed by | Result |
 |---|---|---|---|
-| [time] | Incident created from [R2 / R3 rule names] | Sentinel | [incident number] |
-| [time] | Tags and Tasks checklist added | Automation rule | [success / failure] |
-| [time] | Enrichment query for [defanged IP] | PB1 | [score, country, verdict] |
-| [time] | Decision branch evaluated | PB2 | [branch taken and reason] |
-| [time] | NSG block added with TTL [N days] | PB2 | [success / failure, rule name] |
-| [time] | Approval card sent for session kill and account lock | PB3 | [delivered to channel / mailbox] |
-| [time] | Analyst response | [approver] | [approved / denied / timed out] |
-| [time] | Active SSH session ended and decoy account locked via Run Command | PB3 | [exit status, session no longer present] |
-| [time] | Report draft comment posted | PB6 | [success / failure] |
-| [time] | Manual steps, if any | [analyst] | [result] |
+| [time] | Incident created from R2 | Sentinel | [incident number] |
+| [time] | Enrichment query for [defanged IP] | PB1 (automatic) | [score, country, verdict] |
+| [time] | P1 tag and Teams message | PB4 (automatic) | [success / failure] |
+| [time] | NSG block added with TTL [N days] | PB5 (automatic) | [success / failure, rule name] |
+| [time] | Analyst acknowledged the incident | [analyst] | [time to acknowledge] |
+| [time] | Active SSH session ended and decoy account locked via Run Command | PB7 (manual) | [exit status, session no longer present] |
+| [time] | Report draft comment posted | PB8 (manual) | [success / failure] |
+| [time] | Incident closed as [classification] with reason comment | PB9 (manual) | [success / failure] |
 
 Every row must be traceable to a playbook run ID or an incident comment: [run IDs].
 
 ## 3. Findings
 
 1. **Initial access.** Brute force from [defanged IP]: [N] failures across [M] usernames between [time] and [time], then a successful login for [account] at [time]. Evidence: [R1/R2 queries, screenshot files]. Confidence: [confirmed].
-2. **Post-login activity.** auditd recorded `[command]` at [time], an attempt to download from [defanged URL]. The honeypot's egress deny rule [blocked the download / did not apply]. Evidence: [R3 query, screenshot]. Confidence: [confirmed / likely].
-3. **Persistence of the session.** After the NSG block at [time], the established SSH session [remained connected] until the Run Command step ended it at [time]. This confirms that NSG changes affect new connections only. Evidence: [screenshot, command output]. Confidence: [confirmed].
+2. **Post-login activity.** auditd recorded `[command]` at [time], an attempt to download from [defanged URL]. The honeypot's egress deny rule [blocked the download / did not apply]. Evidence: [auditd query on Syslog local6, screenshot]. Confidence: [confirmed / likely].
+3. **Persistence of the session.** After the NSG block at [time], the established SSH session [remained connected] until the Contain host playbook ended it at [time]. This confirms that NSG changes affect new connections only. Evidence: [screenshot, command output]. Confidence: [confirmed].
 4. **Scope.** [Other accounts, hosts or source IPs involved, from the entity and investigation graph]. Evidence: [screenshot]. Confidence: [confirmed / possible].
 5. **Reputation.** Threat-intelligence score [score] ([source]); weight given: [how much it influenced the decision]. Confidence: [likely].
 
@@ -52,10 +51,9 @@ Keep what the logs show separate from what you conclude. If something could not 
 | Decision | Reason | Alternative considered and rejected |
 |---|---|---|
 | Classify as True Positive – Suspicious Activity | [successful login plus download attempt] | [benign positive] rejected because [reason] |
-| Escalate to P1 / High | [criteria: successful login and tool-download attempt] | [stay Medium] rejected because [reason] |
-| Automatic NSG block with TTL [N days] | [reversible, supported by evidence] | [wait for approval] rejected because [reason] |
-| Session kill and account lock on approval | [disruptive, so human-gated] | [fully automatic] rejected because [reason] |
-| Approval outcome: [approved / denied / timed out] | [approver's reasoning] | |
+| P1 / High | [R2: successful login after brute force] | [P2] rejected because [reason] |
+| Automatic NSG block with TTL [N days] | [reversible, supported by evidence] | [wait for the analyst] rejected because [reason] |
+| Session kill and account lock by a manual playbook | [disruptive, so the analyst decides and runs it] | [fully automatic] rejected because [reason] |
 | Follow-up | [rule tuning / new detection / none], owner [name] | |
 
 ## 5. References
@@ -69,9 +67,9 @@ Keep what the logs show separate from what you conclude. If something could not 
 ## Evidence checklist (remove when complete)
 
 - [ ] Incident page showing alerts, entities and timeline
-- [ ] KQL results for R2 and R3 (redacted)
-- [ ] Approval card as received, and the recorded response
-- [ ] Playbook run history for PB1, PB2, PB3
+- [ ] KQL results for R2 and the auditd commands (redacted)
+- [ ] Teams message as received
+- [ ] Playbook run history for PB1, PB4, PB5, PB7, PB8, PB9
 - [ ] NSG rule showing the block and its TTL record
 - [ ] Run Command output showing the session ended and the account locked
-- [ ] Incident comments, including the PB6 draft
+- [ ] Incident comments, including the PB8 draft
