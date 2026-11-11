@@ -47,7 +47,7 @@ CI runs on every pull request, and `Terraform Plan Preview` is a required check 
 
 ## Playbooks
 
-Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. No playbook exists yet.
+Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB8 and PB9 are built; the rest are planned.
 
 ### Rules
 
@@ -57,7 +57,7 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 4. **Two kinds of playbook.** *Automatic* playbooks are started by an automation rule or a schedule and do only safe, reversible steps. *Manual* playbooks are run by the analyst from the incident page (Run playbook). Running one is the human decision, so disruptive steps such as ending a session are manual only.
 5. **One job per playbook.**
 6. **Settings are parameters.** Kill switch, block TTL and score threshold are workflow parameters, so behaviour changes without copying a playbook.
-7. **Playbooks live in `soar.tf`.** Terraform deploys each one with the AVM module `Azure/avm-res-logic-workflow/azurerm`. API connections and automation rules are native `azurerm` resources.
+7. **Playbooks live in `soar.tf`.** Terraform deploys each one with the AVM module `Azure/avm-res-logic-workflow/azurerm`. Automation rules are native `azurerm` resources. API connections use `azapi`, because a managed identity connection needs `parameterValueType`, which `azurerm_api_connection` cannot set.
 8. **No secrets in files.** Use managed identity, and Key Vault or an API connection for third-party keys.
 9. **Templates are a starting point.** If a playbook starts from a Sentinel Content hub template (for example the Teams ones in SOAR Essentials), a comment in `soar.tf` names the template and what was changed.
 

@@ -31,6 +31,7 @@ env:
     -backend-config=container_name=${{ vars.TFSTATE_CONTAINER }}
   TF_VAR_admin_ssh_public_key: ${{ vars.ADMIN_SSH_PUBLIC_KEY }}
   TF_VAR_management_source_cidr: ${{ secrets.MANAGEMENT_SOURCE_CIDR }}
+  TF_VAR_sentinel_automation_principal_id: ${{ vars.SENTINEL_AUTOMATION_PRINCIPAL_ID }}
 
 jobs:
   fmt-and-validate:
