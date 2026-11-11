@@ -30,10 +30,10 @@ Done when: budget alerts set, the Terraform is applied through the pipeline, Def
 
 ## 3. On the VM (by hand, over SSH as `azureops` on port 22)
 
-1. Create the weak-password decoy account, and allow password login for that account only (Terraform turns password login off in sshd).
-2. Add an sshd listener on port 2222 for admin access. Ubuntu 24.04 starts sshd through a socket, so add the port in an `ssh.socket` override. Check with `ss -tlnp`.
-3. Check that rows arrive in the `Syslog` table, including `local6` (auditd).
-4. Change `lockdown_egress` to `true` in `honeypot.tf` in a PR, to block outbound Internet.
+1. Add an sshd listener on port 2222 for admin access. Ubuntu 24.04 starts sshd through a socket, so add the port in an `ssh.socket` override. List `0.0.0.0:<port>` and `[::]:<port>` for both 22 and 2222: a bare `ListenStream=22` listens on IPv6 only here, and IPv4 is refused. Check with `ss -tlnp`.
+2. Check that rows arrive in the `Syslog` table, including `local6` (auditd).
+3. Change `lockdown_egress` to `true` in `honeypot.tf` in a PR, to block outbound Internet. Do this before step 4, so a compromised decoy can never reach the Internet.
+4. Create the weak-password decoy account, and allow password login for that account only (Terraform turns password login off in sshd). Name the sshd drop-in `10-*.conf`: sshd keeps the first value it reads, so it must sort before `50-cloud-init.conf`.
 
 ## 4. Checks before building
 
