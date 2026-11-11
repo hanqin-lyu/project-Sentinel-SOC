@@ -7,7 +7,7 @@ locals {
   # false for the first apply: the VM must download packages and the agent.
   # Once logs arrive in Sentinel, change to true in a PR to block outbound
   # Internet.
-  lockdown_egress = false
+  lockdown_egress = true
 }
 
 # Created by hand, so the pipeline needs no subscription-level write access.
