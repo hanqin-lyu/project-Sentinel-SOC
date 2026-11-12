@@ -51,7 +51,7 @@ CI runs on every pull request, and `Terraform Plan Preview` is a required check 
 
 ## Playbooks
 
-Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB1, PB5, PB6, PB8 and PB9, a Key Vault for playbook secrets, and the automation rule AR-R2 are built. PB5, PB8 and PB9 are tested with real incidents; PB6's unblock is verified after the 24-hour TTL. PB1 is not yet wired into an automation rule, so for now it runs by Run playbook. The rest are planned.
+Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB1, PB5, PB6, PB8 and PB9, a Key Vault for playbook secrets, and the automation rules AR-R2, AR-R4 and AR-R5 are built. AR-R2 runs PB1 and PB5; AR-R4 and AR-R5 run PB1. PB1, PB5, PB8 and PB9 are tested with real incidents; PB6's unblock is verified after the 24-hour TTL. The rest are planned.
 
 ### Rules
 
@@ -86,7 +86,7 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 
 | Step | Started by | Playbook |
 |---|---|---|
-| Incident created | Automation rule `AR-R2` | PB1 Enrichment, PB4 Notify P1, PB5 Block IP (PB5 only until PB1 and PB4 are built) |
+| Incident created | Automation rule `AR-R2` | PB1 Enrichment, PB5 Block IP (PB4 Notify P1 joins when built) |
 | Block expiry reached | Schedule, every hour | PB6 Block expiry |
 | Contain | Analyst | PB7 Contain host |
 | Report and close | Analyst | PB8 Report draft, PB9 Close incident |
@@ -95,7 +95,7 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 
 | Step | Started by | Playbook |
 |---|---|---|
-| Incident created | Automation rule `AR-R4` | PB1 Enrichment, PB2 Notify P2 |
+| Incident created | Automation rule `AR-R4` | PB1 Enrichment (PB2 Notify P2 joins when built) |
 | Contain, only if the user did more than probe | Analyst | PB7 Contain host |
 | Report and close | Analyst | PB8 Report draft, PB9 Close incident |
 
@@ -103,7 +103,7 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 
 | Step | Started by | Playbook |
 |---|---|---|
-| Incident created | Automation rule `AR-R5` | PB1 Enrichment, PB3 Notify P3 |
+| Incident created | Automation rule `AR-R5` | PB1 Enrichment (PB3 Notify P3 joins when built) |
 | Close at the daily review | Analyst | PB9 Close incident |
 
 #### R1 SSH brute force (P4)
