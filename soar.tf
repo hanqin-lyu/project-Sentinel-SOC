@@ -667,8 +667,8 @@ resource "azurerm_role_assignment" "playbook_keyvault_reader" {
 # One per analytics rule. They only start playbooks and change nothing on the
 # incident. The name must be a GUID; it is fixed so the rule keeps its ID.
 
-# AR-R2: R2 Compromise after brute force (P1). PB1 and PB4 join PB5 here when
-# they are built.
+# AR-R2: R2 Compromise after brute force (P1). Runs PB1 Enrichment and PB5 Block
+# IP; PB4 Notify P1 joins when it is built.
 resource "azurerm_sentinel_automation_rule" "ar_r2" {
   name                       = "bdf3ec36-f3d8-4043-a424-ed61c66869c2"
   display_name               = "AR-R2 Compromise after brute force"
@@ -688,9 +688,68 @@ resource "azurerm_sentinel_automation_rule" "ar_r2" {
 
   action_playbook {
     order        = 1
+    logic_app_id = module.playbook["pb1_enrichment"].resource_id
+  }
+
+  action_playbook {
+    order        = 2
     logic_app_id = module.playbook["pb5_block_ip"].resource_id
   }
 
   # Sentinel can start a playbook only once it has its role on the group.
+  depends_on = [azurerm_role_assignment.sentinel_runs_playbooks]
+}
+
+# AR-R4: R4 Sudo probing (P2). Runs PB1 Enrichment; PB2 Notify P2 joins when it
+# is built.
+resource "azurerm_sentinel_automation_rule" "ar_r4" {
+  name                       = "c7a1e4b2-5d63-4f81-9a2c-3e6b8d1f0a47"
+  display_name               = "AR-R4 Sudo probing"
+  log_analytics_workspace_id = azurerm_sentinel_log_analytics_workspace_onboarding.soc.workspace_id
+  order                      = 2
+  triggers_on                = "Incidents"
+  triggers_when              = "Created"
+
+  condition_json = jsonencode([{
+    conditionType = "Property"
+    conditionProperties = {
+      propertyName   = "IncidentRelatedAnalyticRuleIds"
+      operator       = "Contains"
+      propertyValues = [azurerm_sentinel_alert_rule_scheduled.r4_sudo_probing.id]
+    }
+  }])
+
+  action_playbook {
+    order        = 1
+    logic_app_id = module.playbook["pb1_enrichment"].resource_id
+  }
+
+  depends_on = [azurerm_role_assignment.sentinel_runs_playbooks]
+}
+
+# AR-R5: R5 Sustained brute force (P3). Runs PB1 Enrichment; PB3 Notify P3 joins
+# when it is built.
+resource "azurerm_sentinel_automation_rule" "ar_r5" {
+  name                       = "e2f5b9a1-7c84-4d63-8b1e-5a9c2d4f6e38"
+  display_name               = "AR-R5 Sustained brute force"
+  log_analytics_workspace_id = azurerm_sentinel_log_analytics_workspace_onboarding.soc.workspace_id
+  order                      = 3
+  triggers_on                = "Incidents"
+  triggers_when              = "Created"
+
+  condition_json = jsonencode([{
+    conditionType = "Property"
+    conditionProperties = {
+      propertyName   = "IncidentRelatedAnalyticRuleIds"
+      operator       = "Contains"
+      propertyValues = [azurerm_sentinel_alert_rule_scheduled.r5_sustained_brute_force.id]
+    }
+  }])
+
+  action_playbook {
+    order        = 1
+    logic_app_id = module.playbook["pb1_enrichment"].resource_id
+  }
+
   depends_on = [azurerm_role_assignment.sentinel_runs_playbooks]
 }
