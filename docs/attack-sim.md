@@ -1,9 +1,10 @@
 # Attack simulation: end-to-end validation
 
 How to drive a real SSH brute force against the honeypot and watch the closed loop
-run: detections R1/R2/R4/R5 raise incidents, and automation rule `AR-R2` runs PB5
-to block the attacker. Run it from a network **outside** `MANAGEMENT_SOURCE_CIDR`,
-so you never block or trust yourself.
+run: detections R1/R2/R4/R5 raise incidents, automation rule `AR-R2` runs PB5
+to block the attacker, and the notifiers PB2/PB3/PB4 tag each incident and post
+it to Slack. Run it from a network **outside** `MANAGEMENT_SOURCE_CIDR`, so you
+never block or trust yourself.
 
 Validated end to end on 2026-11-12: R1 alerts, R5/R2/R4 incidents, and the PB5
 block (NSG rule + `SOARBlocks_CL` row + incident comment) all fired on real
@@ -16,6 +17,9 @@ never write a real IP in the repo.
   works). Confirm it: `curl -4 -s ifconfig.me` must not equal your management IP.
 - `hydra` installed locally.
 - The honeypot public IP, `[HONEYPOT_IP]`.
+- The Slack webhook secret `slack-webhook-url` set in the playbook Key Vault, and
+  the `#soc-alerts` channel open, so PB2/PB3/PB4 can post (see README design
+  notes). Without the secret the notifiers fail at the Key Vault read.
 - Three wordlists, kept **outside the repo** (the decoy password must never be
   committed):
   - the decoy username only;
@@ -74,6 +78,19 @@ never write a real IP in the repo.
 4. **Check PB6 (next day).** After the TTL, PB6 (hourly) removes the IP from the
    rule, writes an `Unblock` row to `SOARBlocks_CL`, and comments on the incident.
 
+5. **Check the notifiers (PB2/PB3/PB4).** Each incident above also runs its
+   notifier: R5 runs PB3 (P3), R4 runs PB2 (P2), R2 runs PB4 (P1).
+   - **Slack.** `#soc-alerts` has one message per incident, with the severity,
+     incident number and title, the defanged source IP, and the created time.
+     The P2 and P3 messages link the SLA doc; the P1 message says PB5 is blocking.
+   - **Tag.** Each incident carries the matching label (`P1`/`P2`/`P3`). Confirm
+     the label was **added**, not that it replaced an existing one.
+   - **Comment.** PB2 comments the acknowledge-by time (30 min from creation);
+     PB3 comments the daily-review target.
+   - **No secret leak.** Open the playbook run (Logic App run history): the
+     `Get_webhook` output and the `Send_slack` input show as secured, so the
+     webhook URL is not visible.
+
 ## Queries
 
 **Did the failures and the success share one IP? (run before expecting R2)**
@@ -117,3 +134,4 @@ SOARBlocks_CL
 | Rules fired | R1 (alert only), R5, R2, R4 |
 | PB5 | Blocked `[ATTACKER_IP]`: NSG rule + `SOARBlocks_CL` Block row + incident comment, TTL 24 h |
 | PB6 | [to verify after the TTL] |
+| PB2/PB3/PB4 | [to verify: tag added, Slack message in `#soc-alerts`, webhook secured in run history] |
