@@ -16,7 +16,7 @@ Status: Sentinel, the honeypot and the first playbooks are deployed through the 
 | `honeypot.tf` | VNet, NSG, public IP, Ubuntu 24.04 VM, Azure Monitor Agent, DCR link, first-boot script |
 | `soar.tf` | Playbooks, their API connection and roles, automation rules |
 | `governance/` | Control plane, applied by hand and outside the pipeline: policy exemption on `rg-lab-honeypot` for the intentionally open SSH port |
-| `docs/` | Phase 0 checklist, SLA (P1–P4 overview, plus the P2 and P3 SLA files sent with notifications), triage reports |
+| `docs/` | Phase 0 checklist, SLA (P1–P4 overview, plus the P2 and P3 SLA files sent with notifications), triage reports, the attack-simulation runbook |
 
 All Terraform is one root module with one state, so `terraform plan` shows what each change adds and Terraform works out the order itself. The honeypot is removed at the end by a PR that deletes `honeypot.tf` and its outputs.
 
