@@ -37,9 +37,13 @@ module "key_vault" {
   enable_telemetry = false
 
   # Lab vault: no firewall, so the Consumption Logic App managed identity reaches
-  # it over the public endpoint, and no purge protection, so it tears down clean.
-  network_acls             = null
-  purge_protection_enabled = false
+  # it over the public endpoint. Soft delete is mandatory in Azure and cannot be
+  # turned off, so set the shortest retention explicitly (the module would
+  # otherwise send enableSoftDelete = false and the apply would fail). Purge
+  # protection stays off, so a deleted vault can be purged instead of lingering.
+  network_acls               = null
+  purge_protection_enabled   = false
+  soft_delete_retention_days = 7
 }
 
 locals {
