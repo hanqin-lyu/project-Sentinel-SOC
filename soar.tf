@@ -87,6 +87,15 @@ locals {
   block_log_url  = "${module.dce_soar.logs_ingestion_endpoint}/dataCollectionRules/${module.dcr_soar_blocks.resource.output.properties.immutableId}/streams/Custom-SOARBlocks_CL?api-version=2023-01-01"
   block_log_auth = { type = "ManagedServiceIdentity", audience = "https://monitor.azure.com" }
 
+  # The notify playbooks (PB2, PB3, PB4) read the Slack incoming-webhook URL from
+  # Key Vault with the managed identity and POST the alert to it. The webhook URL
+  # is itself the secret, so the fetch hides its output and the POST hides its
+  # input. Slack incoming webhooks cannot attach a file, so the P2 and P3
+  # messages link to the SLA doc in the repo instead of attaching it.
+  kv_auth              = { type = "ManagedServiceIdentity", audience = "https://vault.azure.net" }
+  slack_webhook_kv_url = "https://${module.key_vault.name}.vault.azure.net/secrets/slack-webhook-url?api-version=7.4"
+  sla_doc_base         = "https://github.com/hanqin-lyu/project-Sentinel-SOC/blob/main/docs/sla"
+
   # Each playbook is one job (README, Playbooks).
   playbooks = {
     # PB1 (automatic, AR-R4 and AR-R5): look up the attacker IP in AbuseIPDB and
@@ -167,6 +176,290 @@ locals {
                 Usage type: @{body('Check_AbuseIPDB')?['data']?['usageType']}<br>
                 Last reported (UTC): @{body('Check_AbuseIPDB')?['data']?['lastReportedAt']}</p>
               HTML
+            }
+          }
+        }
+      }
+    }
+
+    # PB2 (automatic, AR-R4): the P2 notifier for R4 Sudo probing. Tags the
+    # incident P2, comments the acknowledge-by time (30 minutes from creation),
+    # and posts the alert to Slack with a link to the P2 SLA. The Slack webhook
+    # URL is read from Key Vault at run time and never shown in the run history.
+    pb2_notify_p2 = {
+      name       = "pb2-notify-p2"
+      triggers   = local.sentinel_incident_trigger
+      parameters = {}
+      actions = {
+        IP_entities = {
+          type     = "Query"
+          runAfter = {}
+          inputs = {
+            from  = "@${local.incident_props}?['relatedEntities']"
+            where = "@equals(item()?['kind'], 'Ip')"
+          }
+        }
+        IP_addresses = {
+          type     = "Select"
+          runAfter = { IP_entities = ["Succeeded"] }
+          inputs = {
+            from   = "@body('IP_entities')"
+            select = "@item()?['properties']?['address']"
+          }
+        }
+        IP = {
+          type     = "Compose"
+          runAfter = { IP_addresses = ["Succeeded"] }
+          inputs   = "@{replace(join(take(body('IP_addresses'), 1), ''), '''', '')}"
+        }
+        # P2 acknowledge target: 30 minutes after the incident was created.
+        Due_time = {
+          type     = "Compose"
+          runAfter = {}
+          inputs   = "@{addMinutes(${local.incident_props}?['createdTimeUtc'], 30)}"
+        }
+        Add_label = {
+          type     = "ApiConnection"
+          runAfter = {}
+          inputs = {
+            host   = local.sentinel_host
+            method = "put"
+            path   = "/Incidents"
+            body = {
+              incidentArmId = local.incident_id
+              labels        = [{ labelName = "P2", labelType = "User" }]
+            }
+          }
+        }
+        Comment_due = {
+          type     = "ApiConnection"
+          runAfter = { Due_time = ["Succeeded"], Add_label = ["Succeeded"] }
+          inputs = {
+            host   = local.sentinel_host
+            method = "post"
+            path   = "/Incidents/Comment"
+            body = {
+              incidentArmId = local.incident_id
+              message       = "<p><strong>Tagged P2 by PB2.</strong> Acknowledge by @{outputs('Due_time')} (UTC, 30 min from creation); resolve same day. SLA: docs/sla/P2-sla.md.</p>"
+            }
+          }
+        }
+        Get_webhook = {
+          type                 = "Http"
+          runAfter             = {}
+          runtimeConfiguration = { secureData = { properties = ["outputs"] } }
+          inputs = {
+            method         = "GET"
+            uri            = local.slack_webhook_kv_url
+            authentication = local.kv_auth
+          }
+        }
+        # The URI is the webhook secret, so the inputs are hidden.
+        Send_slack = {
+          type                 = "Http"
+          runAfter             = { IP = ["Succeeded"], Due_time = ["Succeeded"], Get_webhook = ["Succeeded"] }
+          runtimeConfiguration = { secureData = { properties = ["inputs"] } }
+          inputs = {
+            method = "POST"
+            uri    = "@body('Get_webhook')?['value']"
+            body = {
+              text = "P2 incident: @{${local.incident_props}?['title']}"
+              blocks = [
+                {
+                  type = "header"
+                  text = { type = "plain_text", text = "🟠 P2 — Sudo probing (R4)", emoji = true }
+                },
+                {
+                  type = "section"
+                  text = {
+                    type = "mrkdwn"
+                    text = "*Incident:* #@{${local.incident_props}?['incidentNumber']} @{${local.incident_props}?['title']}\n*Severity:* @{${local.incident_props}?['severity']}\n*Source IP:* @{replace(outputs('IP'), '.', '[.]')}\n*Created (UTC):* @{${local.incident_props}?['createdTimeUtc']}\n*Acknowledge by (UTC):* @{outputs('Due_time')}"
+                  }
+                },
+                {
+                  type = "section"
+                  text = { type = "mrkdwn", text = "<${local.sla_doc_base}/P2-sla.md|P2 response SLA>" }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+
+    # PB3 (automatic, AR-R5): the P3 notifier for R5 Sustained brute force. Tags
+    # the incident P3, comments the acknowledge target, and posts the alert to
+    # Slack with a link to the P3 SLA. P3 has no clock deadline (it is handled at
+    # the next daily review), so the comment states that target as text.
+    pb3_notify_p3 = {
+      name       = "pb3-notify-p3"
+      triggers   = local.sentinel_incident_trigger
+      parameters = {}
+      actions = {
+        IP_entities = {
+          type     = "Query"
+          runAfter = {}
+          inputs = {
+            from  = "@${local.incident_props}?['relatedEntities']"
+            where = "@equals(item()?['kind'], 'Ip')"
+          }
+        }
+        IP_addresses = {
+          type     = "Select"
+          runAfter = { IP_entities = ["Succeeded"] }
+          inputs = {
+            from   = "@body('IP_entities')"
+            select = "@item()?['properties']?['address']"
+          }
+        }
+        IP = {
+          type     = "Compose"
+          runAfter = { IP_addresses = ["Succeeded"] }
+          inputs   = "@{replace(join(take(body('IP_addresses'), 1), ''), '''', '')}"
+        }
+        Add_label = {
+          type     = "ApiConnection"
+          runAfter = {}
+          inputs = {
+            host   = local.sentinel_host
+            method = "put"
+            path   = "/Incidents"
+            body = {
+              incidentArmId = local.incident_id
+              labels        = [{ labelName = "P3", labelType = "User" }]
+            }
+          }
+        }
+        Comment_due = {
+          type     = "ApiConnection"
+          runAfter = { Add_label = ["Succeeded"] }
+          inputs = {
+            host   = local.sentinel_host
+            method = "post"
+            path   = "/Incidents/Comment"
+            body = {
+              incidentArmId = local.incident_id
+              message       = "<p><strong>Tagged P3 by PB3.</strong> Acknowledge at the next daily review; resolve same day. SLA: docs/sla/P3-sla.md.</p>"
+            }
+          }
+        }
+        Get_webhook = {
+          type                 = "Http"
+          runAfter             = {}
+          runtimeConfiguration = { secureData = { properties = ["outputs"] } }
+          inputs = {
+            method         = "GET"
+            uri            = local.slack_webhook_kv_url
+            authentication = local.kv_auth
+          }
+        }
+        Send_slack = {
+          type                 = "Http"
+          runAfter             = { IP = ["Succeeded"], Get_webhook = ["Succeeded"] }
+          runtimeConfiguration = { secureData = { properties = ["inputs"] } }
+          inputs = {
+            method = "POST"
+            uri    = "@body('Get_webhook')?['value']"
+            body = {
+              text = "P3 incident: @{${local.incident_props}?['title']}"
+              blocks = [
+                {
+                  type = "header"
+                  text = { type = "plain_text", text = "🟡 P3 — Sustained brute force (R5)", emoji = true }
+                },
+                {
+                  type = "section"
+                  text = {
+                    type = "mrkdwn"
+                    text = "*Incident:* #@{${local.incident_props}?['incidentNumber']} @{${local.incident_props}?['title']}\n*Severity:* @{${local.incident_props}?['severity']}\n*Source IP:* @{replace(outputs('IP'), '.', '[.]')}\n*Created (UTC):* @{${local.incident_props}?['createdTimeUtc']}\n*Acknowledge:* next daily review"
+                  }
+                },
+                {
+                  type = "section"
+                  text = { type = "mrkdwn", text = "<${local.sla_doc_base}/P3-sla.md|P3 response SLA>" }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+
+    # PB4 (automatic, AR-R2): the P1 notifier for R2 Compromise after brute
+    # force. Tags the incident P1 and posts the alert to Slack. PB5 blocks the IP
+    # on the same incident, so this is notification only; there is no SLA doc for
+    # P1 (act now).
+    pb4_notify_p1 = {
+      name       = "pb4-notify-p1"
+      triggers   = local.sentinel_incident_trigger
+      parameters = {}
+      actions = {
+        IP_entities = {
+          type     = "Query"
+          runAfter = {}
+          inputs = {
+            from  = "@${local.incident_props}?['relatedEntities']"
+            where = "@equals(item()?['kind'], 'Ip')"
+          }
+        }
+        IP_addresses = {
+          type     = "Select"
+          runAfter = { IP_entities = ["Succeeded"] }
+          inputs = {
+            from   = "@body('IP_entities')"
+            select = "@item()?['properties']?['address']"
+          }
+        }
+        IP = {
+          type     = "Compose"
+          runAfter = { IP_addresses = ["Succeeded"] }
+          inputs   = "@{replace(join(take(body('IP_addresses'), 1), ''), '''', '')}"
+        }
+        Add_label = {
+          type     = "ApiConnection"
+          runAfter = {}
+          inputs = {
+            host   = local.sentinel_host
+            method = "put"
+            path   = "/Incidents"
+            body = {
+              incidentArmId = local.incident_id
+              labels        = [{ labelName = "P1", labelType = "User" }]
+            }
+          }
+        }
+        Get_webhook = {
+          type                 = "Http"
+          runAfter             = {}
+          runtimeConfiguration = { secureData = { properties = ["outputs"] } }
+          inputs = {
+            method         = "GET"
+            uri            = local.slack_webhook_kv_url
+            authentication = local.kv_auth
+          }
+        }
+        Send_slack = {
+          type                 = "Http"
+          runAfter             = { IP = ["Succeeded"], Get_webhook = ["Succeeded"] }
+          runtimeConfiguration = { secureData = { properties = ["inputs"] } }
+          inputs = {
+            method = "POST"
+            uri    = "@body('Get_webhook')?['value']"
+            body = {
+              text = "P1 incident: @{${local.incident_props}?['title']}"
+              blocks = [
+                {
+                  type = "header"
+                  text = { type = "plain_text", text = "🔴 P1 — Compromise after brute force (R2)", emoji = true }
+                },
+                {
+                  type = "section"
+                  text = {
+                    type = "mrkdwn"
+                    text = "*Incident:* #@{${local.incident_props}?['incidentNumber']} @{${local.incident_props}?['title']}\n*Severity:* @{${local.incident_props}?['severity']}\n*Source IP:* @{replace(outputs('IP'), '.', '[.]')}\n*Created (UTC):* @{${local.incident_props}?['createdTimeUtc']}\n*Action:* PB5 is blocking this IP now. Acknowledge immediately."
+                  }
+                }
+              ]
             }
           }
         }
@@ -646,9 +939,10 @@ resource "azurerm_role_assignment" "playbook_block_log" {
 }
 
 locals {
-  # Playbooks that read a secret from the Key Vault. PB2, PB3, PB4 and PB10 join
-  # here when they are built (the Slack webhook URL).
-  keyvault_playbooks = toset(["pb1_enrichment"])
+  # Playbooks that read a secret from the Key Vault. PB10 joins here when it is
+  # built (the Slack webhook URL). PB1 reads the AbuseIPDB key; PB2, PB3 and PB4
+  # read the Slack webhook URL.
+  keyvault_playbooks = toset(["pb1_enrichment", "pb2_notify_p2", "pb3_notify_p3", "pb4_notify_p1"])
 }
 
 # Read secrets from the playbook Key Vault, and nothing else on it.
@@ -667,8 +961,8 @@ resource "azurerm_role_assignment" "playbook_keyvault_reader" {
 # One per analytics rule. They only start playbooks and change nothing on the
 # incident. The name must be a GUID; it is fixed so the rule keeps its ID.
 
-# AR-R2: R2 Compromise after brute force (P1). Runs PB1 Enrichment and PB5 Block
-# IP; PB4 Notify P1 joins when it is built.
+# AR-R2: R2 Compromise after brute force (P1). Runs PB1 Enrichment, PB5 Block IP
+# and PB4 Notify P1.
 resource "azurerm_sentinel_automation_rule" "ar_r2" {
   name                       = "bdf3ec36-f3d8-4043-a424-ed61c66869c2"
   display_name               = "AR-R2 Compromise after brute force"
@@ -696,12 +990,16 @@ resource "azurerm_sentinel_automation_rule" "ar_r2" {
     logic_app_id = module.playbook["pb5_block_ip"].resource_id
   }
 
+  action_playbook {
+    order        = 3
+    logic_app_id = module.playbook["pb4_notify_p1"].resource_id
+  }
+
   # Sentinel can start a playbook only once it has its role on the group.
   depends_on = [azurerm_role_assignment.sentinel_runs_playbooks]
 }
 
-# AR-R4: R4 Sudo probing (P2). Runs PB1 Enrichment; PB2 Notify P2 joins when it
-# is built.
+# AR-R4: R4 Sudo probing (P2). Runs PB1 Enrichment and PB2 Notify P2.
 resource "azurerm_sentinel_automation_rule" "ar_r4" {
   name                       = "c7a1e4b2-5d63-4f81-9a2c-3e6b8d1f0a47"
   display_name               = "AR-R4 Sudo probing"
@@ -724,11 +1022,15 @@ resource "azurerm_sentinel_automation_rule" "ar_r4" {
     logic_app_id = module.playbook["pb1_enrichment"].resource_id
   }
 
+  action_playbook {
+    order        = 2
+    logic_app_id = module.playbook["pb2_notify_p2"].resource_id
+  }
+
   depends_on = [azurerm_role_assignment.sentinel_runs_playbooks]
 }
 
-# AR-R5: R5 Sustained brute force (P3). Runs PB1 Enrichment; PB3 Notify P3 joins
-# when it is built.
+# AR-R5: R5 Sustained brute force (P3). Runs PB1 Enrichment and PB3 Notify P3.
 resource "azurerm_sentinel_automation_rule" "ar_r5" {
   name                       = "e2f5b9a1-7c84-4d63-8b1e-5a9c2d4f6e38"
   display_name               = "AR-R5 Sustained brute force"
@@ -749,6 +1051,11 @@ resource "azurerm_sentinel_automation_rule" "ar_r5" {
   action_playbook {
     order        = 1
     logic_app_id = module.playbook["pb1_enrichment"].resource_id
+  }
+
+  action_playbook {
+    order        = 2
+    logic_app_id = module.playbook["pb3_notify_p3"].resource_id
   }
 
   depends_on = [azurerm_role_assignment.sentinel_runs_playbooks]
