@@ -15,6 +15,33 @@ resource "azurerm_role_assignment" "sentinel_runs_playbooks" {
   principal_type       = "ServicePrincipal"
 }
 
+# ---------------------------------------------------------------------------
+# Key Vault for playbook secrets
+# ---------------------------------------------------------------------------
+# Holds the third-party secrets the playbooks need (the AbuseIPDB API key now,
+# the Slack webhook URL later). Terraform creates the vault empty and grants each
+# playbook identity read access; the secret VALUES are set by hand with
+# `az keyvault secret set`, so no secret is ever in the repo or the state. RBAC
+# authorization is the module default here, so there are no access policies.
+module "key_vault" {
+  source  = "Azure/avm-res-keyvault-vault/azurerm"
+  version = "0.13.1"
+
+  # Key Vault names are globally unique, so a short hash of the resource group
+  # keeps the name stable and collision-free without hard-coding a guess.
+  name             = "kv-socsoar-${substr(sha1(data.azurerm_resource_group.automation.id), 0, 6)}"
+  location         = local.location
+  parent_id        = data.azurerm_resource_group.automation.id
+  tenant_id        = data.azurerm_client_config.current.tenant_id
+  sku_name         = "standard"
+  enable_telemetry = false
+
+  # Lab vault: no firewall, so the Consumption Logic App managed identity reaches
+  # it over the public endpoint, and no purge protection, so it tears down clean.
+  network_acls             = null
+  purge_protection_enabled = false
+}
+
 locals {
   sentinel_managed_api_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Web/locations/${local.location}/managedApis/azuresentinel"
 
@@ -58,6 +85,90 @@ locals {
 
   # Each playbook is one job (README, Playbooks).
   playbooks = {
+    # PB1 (automatic, AR-R4 and AR-R5): look up the attacker IP in AbuseIPDB and
+    # write the reputation as an incident comment. The API key is read from Key
+    # Vault at run time with the managed identity; it never appears in the
+    # definition or the run history (secureData hides the key fetch and the call).
+    pb1_enrichment = {
+      name       = "pb1-enrichment"
+      triggers   = local.sentinel_incident_trigger
+      parameters = {}
+      actions = {
+        IP_entities = {
+          type     = "Query"
+          runAfter = {}
+          inputs = {
+            from  = "@${local.incident_props}?['relatedEntities']"
+            where = "@equals(item()?['kind'], 'Ip')"
+          }
+        }
+        IP_addresses = {
+          type     = "Select"
+          runAfter = { IP_entities = ["Succeeded"] }
+          inputs = {
+            from   = "@body('IP_entities')"
+            select = "@item()?['properties']?['address']"
+          }
+        }
+        # R4 and R5 group their alerts by IP, so an incident has one. Quotes are
+        # removed because the value goes into a URL query.
+        IP = {
+          type     = "Compose"
+          runAfter = { IP_addresses = ["Succeeded"] }
+          inputs   = "@{replace(join(take(body('IP_addresses'), 1), ''), '''', '')}"
+        }
+        # Read the AbuseIPDB key from Key Vault with the managed identity. The
+        # output holds the secret, so it is kept out of the run history.
+        Get_api_key = {
+          type                 = "Http"
+          runAfter             = { IP = ["Succeeded"] }
+          runtimeConfiguration = { secureData = { properties = ["outputs"] } }
+          inputs = {
+            method         = "GET"
+            uri            = "https://${module.key_vault.name}.vault.azure.net/secrets/abuseipdb-api-key?api-version=7.4"
+            authentication = { type = "ManagedServiceIdentity", audience = "https://vault.azure.net" }
+          }
+        }
+        # The Key header carries the secret, so these inputs are hidden too.
+        Check_AbuseIPDB = {
+          type                 = "Http"
+          runAfter             = { Get_api_key = ["Succeeded"] }
+          runtimeConfiguration = { secureData = { properties = ["inputs"] } }
+          inputs = {
+            method  = "GET"
+            uri     = "https://api.abuseipdb.com/api/v2/check"
+            queries = { ipAddress = "@outputs('IP')", maxAgeInDays = "90" }
+            headers = {
+              Key    = "@body('Get_api_key')?['value']"
+              Accept = "application/json"
+            }
+          }
+        }
+        Comment_enrichment = {
+          type     = "ApiConnection"
+          runAfter = { Check_AbuseIPDB = ["Succeeded"] }
+          inputs = {
+            host   = local.sentinel_host
+            method = "post"
+            path   = "/Incidents/Comment"
+            body = {
+              incidentArmId = local.incident_id
+              message       = <<-HTML
+                <p><strong>Enrichment (PB1) &mdash; AbuseIPDB</strong></p>
+                <p>IP: @{replace(outputs('IP'), '.', '[.]')}<br>
+                Abuse confidence: @{body('Check_AbuseIPDB')?['data']?['abuseConfidenceScore']}%<br>
+                Total reports: @{body('Check_AbuseIPDB')?['data']?['totalReports']}<br>
+                Country: @{body('Check_AbuseIPDB')?['data']?['countryCode']}<br>
+                ISP: @{body('Check_AbuseIPDB')?['data']?['isp']}<br>
+                Usage type: @{body('Check_AbuseIPDB')?['data']?['usageType']}<br>
+                Last reported (UTC): @{body('Check_AbuseIPDB')?['data']?['lastReportedAt']}</p>
+              HTML
+            }
+          }
+        }
+      }
+    }
+
     # PB5 (automatic, AR-R2): add the attacker IP to SOAR-Block-Attackers and
     # log the block with its expiry in SOARBlocks_CL. Skips with a comment when
     # the kill switch is off, or the IP is invalid, private, trusted or already
@@ -526,6 +637,22 @@ resource "azurerm_role_assignment" "playbook_block_log" {
 
   scope                = module.dcr_soar_blocks.resource_id
   role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = module.playbook[each.key].resource.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+locals {
+  # Playbooks that read a secret from the Key Vault. PB2, PB3, PB4 and PB10 join
+  # here when they are built (the Slack webhook URL).
+  keyvault_playbooks = toset(["pb1_enrichment"])
+}
+
+# Read secrets from the playbook Key Vault, and nothing else on it.
+resource "azurerm_role_assignment" "playbook_keyvault_reader" {
+  for_each = local.keyvault_playbooks
+
+  scope                = module.key_vault.resource_id
+  role_definition_name = "Key Vault Secrets User"
   principal_id         = module.playbook[each.key].resource.identity[0].principal_id
   principal_type       = "ServicePrincipal"
 }
