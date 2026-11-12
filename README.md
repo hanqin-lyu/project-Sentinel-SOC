@@ -14,7 +14,7 @@ Status: Sentinel, the honeypot and the first playbooks are deployed through the 
 | `outputs.tf` | Key outputs |
 | `sentinel.tf` | Log Analytics workspace, Sentinel, syslog data collection rule (DCR), Trusted_IPs watchlist, analytics rules with their KQL, the `SOARBlocks_CL` block log with its endpoint and DCR |
 | `honeypot.tf` | VNet, NSG, public IP, Ubuntu 24.04 VM, Azure Monitor Agent, DCR link, first-boot script |
-| `soar.tf` | Playbooks, their API connection and roles, automation rules |
+| `soar.tf` | Playbooks, their API connection and roles, the Key Vault for their secrets, automation rules |
 | `governance/` | Control plane, applied by hand and outside the pipeline: policy exemption on `rg-lab-honeypot` for the intentionally open SSH port |
 | `docs/` | Phase 0 checklist, SLA (P1–P4 overview, plus the P2 and P3 SLA files sent with notifications), triage reports, the attack-simulation runbook |
 
@@ -44,12 +44,13 @@ CI runs on every pull request, and `Terraform Plan Preview` is a required check 
 - **Every response step is a playbook.** Automatic playbooks do safe, reversible steps; disruptive steps are manual playbooks the analyst runs from the incident. Running a manual playbook replaces the Teams approval card from the early plan, and the run history records who did what and when. This is also least privilege: each playbook identity holds only the role its one job needs, and those assignments are Terraform. The human roles (Security Reader, SOC Responder, Owner) are a documented design, not assigned, because one person runs the lab. In the index each playbook is listed under the analytics rule it answers, with the automation rule that starts it.
 - **Resource groups are made by hand.** Terraform looks up the three resource groups with data sources, so the CD identity needs no write access on the subscription. It has Contributor and Role Based Access Control Administrator on those three groups only, because playbook identities get roles in all three. Its OIDC credential also only works in the `production-demo` environment, after the owner approves the run.
 - **Block log in a custom table.** PB5 writes each block, with its expiry, to `SOARBlocks_CL` through the Logs Ingestion API, and PB6 finds expired blocks with KQL. Incident comments were the other option, but they cannot be queried across incidents, and the table also feeds the workbook. The NSG rule is still what blocks. The DCR uses a separate data collection endpoint, because the AVM DCR module does not accept the `Direct` kind that would give the DCR its own endpoint. PB5 and PB6 call Azure with the HTTP action and their managed identity, so they need no extra API connection.
+- **Key Vault for playbook secrets.** Third-party secrets (the AbuseIPDB API key now, the Slack webhook URL later) live in a Key Vault. Terraform creates the vault with RBAC authorization and grants each playbook identity the Key Vault Secrets User role, but the secret *values* are set by hand, so no secret is in the repo or the state: assign yourself Key Vault Secrets Officer on the vault, then `az keyvault secret set --vault-name <vault> --name abuseipdb-api-key --value <key>`. A playbook reads its secret at run time with the managed identity (audience `https://vault.azure.net`) and marks that step's data secure, so the value never shows in the run history.
 - **Honeypot findings in Checkov** are skipped inline with the reason "honeypot by design", never by turning the scan off.
 - **One Checkov check is skipped in the pipeline: CKV_TF_1** (module source must be a git commit hash). AVM modules come from the Terraform Registry pinned to an exact version, and the modules nested inside AVM cannot be changed or skipped inline.
 
 ## Playbooks
 
-Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB5, PB6, PB8 and PB9 and the automation rule AR-R2 are built; PB8 and PB9 are tested with a manual run on a test incident. The rest are planned.
+Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB1, PB5, PB6, PB8 and PB9, a Key Vault for playbook secrets, and the automation rule AR-R2 are built. PB5, PB8 and PB9 are tested with real incidents; PB6's unblock is verified after the 24-hour TTL. PB1 is not yet wired into an automation rule, so for now it runs by Run playbook. The rest are planned.
 
 ### Rules
 
@@ -117,6 +118,7 @@ These role assignments are Terraform in `soar.tf`, so each one is in the plan an
 | Identity | Role | Scope |
 |---|---|---|
 | PB1 Enrichment | Microsoft Sentinel Responder | `rg-soc-sentinel` |
+| | Key Vault Secrets User (read the AbuseIPDB key) | The playbook Key Vault only |
 | PB2, PB3, PB4 Notify | Microsoft Sentinel Responder (tag, comment). Teams through an API connection | `rg-soc-sentinel` |
 | PB5 Block IP, PB6 Block expiry | Network Contributor | The `SOAR-Block-Attackers` rule only |
 | | Monitoring Metrics Publisher (write to `SOARBlocks_CL`) | The `dcr-soar-blocks` DCR only |
