@@ -46,13 +46,14 @@ CI runs on every pull request, and `Terraform Plan Preview` is a required check 
 - **The Playbooks tab's "missing permissions" is a false positive.** `sentinel_runs_playbooks` in `soar.tf` grants Microsoft Sentinel Automation Contributor to the Azure Security Insights service principal on `rg-core-automation`, which is the role that lets automation rules run playbooks. The Defender portal's Playbooks tab may still show "missing permissions" on every playbook, because its probe does not detect a grant made through IaC. The role is in fact present (confirmed with `az role assignment list`) and playbooks run (PB5 auto-ran from `AR-R2`). Do **not** click "Configure permissions": it would create a second, portal-managed assignment that drifts from Terraform.
 - **Block log in a custom table.** PB5 writes each block, with its expiry, to `SOARBlocks_CL` through the Logs Ingestion API, and PB6 finds expired blocks with KQL. Incident comments were the other option, but they cannot be queried across incidents, and the table also feeds the workbook. The NSG rule is still what blocks. The DCR uses a separate data collection endpoint, because the AVM DCR module does not accept the `Direct` kind that would give the DCR its own endpoint. PB5 and PB6 call Azure with the HTTP action and their managed identity, so they need no extra API connection.
 - **Key Vault for playbook secrets.** Third-party secrets (the AbuseIPDB API key now, the Slack webhook URL later) live in a Key Vault. Terraform creates the vault with RBAC authorization and grants each playbook identity the Key Vault Secrets User role, but the secret *values* are set by hand, so no secret is in the repo or the state: assign yourself Key Vault Secrets Officer on the vault, then `az keyvault secret set --vault-name <vault> --name abuseipdb-api-key --value <key>`. A playbook reads its secret at run time with the managed identity (audience `https://vault.azure.net`) and marks that step's data secure, so the value never shows in the run history.
+- **Slack notifications over an incoming webhook (PB2, PB3, PB4).** The notifiers post to a Slack incoming webhook, not Teams. The webhook URL is a secret, so it lives in Key Vault as `slack-webhook-url`; each notifier reads it at run time with its managed identity and marks the fetch and the POST secure, so the URL never shows in the run history (the same pattern as PB1's AbuseIPDB key). A webhook can only post a message, not attach a file, so the P2 and P3 messages link to `docs/sla/P2-sla.md` and `docs/sla/P3-sla.md` in the repo instead of attaching them; the SLA doc stays the single source. Delivery is one HTTP POST with the managed identity, so there is no Slack API connection to manage. PB2 tags P2 and comments an acknowledge-by time 30 minutes from creation; PB3 tags P3 and states the daily-review target (R5 has no clock deadline); PB4 tags P1 and only notifies, because PB5 blocks the IP on the same incident.
 - **AbuseIPDB enrichment (PB1).** AbuseIPDB is a crowd-sourced IP-reputation database: operators report the IPs that attacked them, and a lookup returns a 0-100 confidence score with the report count, country, ISP and usage type. PB1 looks up the attacker IP and writes this as an incident comment, so triage sees at a glance whether the source is a known bad actor. It is context, not a verdict: a high score flags a known-bad IP, but no reports does not prove an IP is safe (a fresh one has none), so it is one signal among several.
 - **Honeypot findings in Checkov** are skipped inline with the reason "honeypot by design", never by turning the scan off.
 - **One Checkov check is skipped in the pipeline: CKV_TF_1** (module source must be a git commit hash). AVM modules come from the Terraform Registry pinned to an exact version, and the modules nested inside AVM cannot be changed or skipped inline.
 
 ## Playbooks
 
-Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB1, PB5, PB6, PB8 and PB9, a Key Vault for playbook secrets, and the automation rules AR-R2, AR-R4 and AR-R5 are built. AR-R2 runs PB1 and PB5; AR-R4 and AR-R5 run PB1. PB1, PB5, PB8 and PB9 are tested with real incidents; PB6's unblock is verified after the 24-hour TTL. The rest are planned.
+Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB1, PB2, PB3, PB4, PB5, PB6, PB8 and PB9, a Key Vault for playbook secrets, and the automation rules AR-R2, AR-R4 and AR-R5 are built. AR-R2 runs PB1, PB5 and PB4; AR-R4 runs PB1 and PB2; AR-R5 runs PB1 and PB3. PB1, PB5, PB8 and PB9 are tested with real incidents; PB6's unblock is verified after the 24-hour TTL; PB2, PB3 and PB4 are tested once the Slack webhook secret is set. The rest are planned.
 
 ### Rules
 
@@ -71,15 +72,15 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 | ID | Playbook | Class | Kind | Job |
 |---|---|---|---|---|
 | PB1 | Enrichment | Enrichment | Automatic | Look up the attacker IP and write the result as an incident comment |
-| PB2 | Notify P2 | Orchestration | Automatic | Add the P2 tag, write the due time as a comment, send the Teams message with `docs/sla/P2-sla.md` attached |
-| PB3 | Notify P3 | Orchestration | Automatic | Add the P3 tag, write the due time as a comment, send the Teams message with `docs/sla/P3-sla.md` attached |
-| PB4 | Notify P1 | Response | Automatic | Add the P1 tag and send the Teams message |
+| PB2 | Notify P2 | Orchestration | Automatic | Add the P2 tag, comment the acknowledge-by time, post the Slack message linking `docs/sla/P2-sla.md` |
+| PB3 | Notify P3 | Orchestration | Automatic | Add the P3 tag, comment the acknowledge target, post the Slack message linking `docs/sla/P3-sla.md` |
+| PB4 | Notify P1 | Response | Automatic | Add the P1 tag and post the Slack message |
 | PB5 | Block IP | Response | Automatic | Add the attacker IP to the NSG block rule and log it with its expiry in `SOARBlocks_CL`; skip private, trusted and already-blocked IPs |
 | PB6 | Block expiry | Response | Automatic (schedule) | Every hour, remove blocks past their expiry in `SOARBlocks_CL`, log the unblock and comment on the incident |
 | PB7 | Contain host | Response | Manual | End the attacker's SSH session and lock the account through Run Command |
 | PB8 | Report draft | Response | Manual | Post the incident facts as a comment to start the triage report |
 | PB9 | Close incident | Response | Manual | Set the classification and write the closing reason as a comment |
-| PB10 | Failure handler | Response | Automatic | When any playbook run fails, comment on the incident and send a Teams message |
+| PB10 | Failure handler | Response | Automatic | When any playbook run fails, comment on the incident and send a Slack message |
 
 ### Response per analytics rule
 
@@ -87,7 +88,7 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 
 | Step | Started by | Playbook |
 |---|---|---|
-| Incident created | Automation rule `AR-R2` | PB1 Enrichment, PB5 Block IP (PB4 Notify P1 joins when built) |
+| Incident created | Automation rule `AR-R2` | PB1 Enrichment, PB5 Block IP, PB4 Notify P1 |
 | Block expiry reached | Schedule, every hour | PB6 Block expiry |
 | Contain | Analyst | PB7 Contain host |
 | Report and close | Analyst | PB8 Report draft, PB9 Close incident |
@@ -96,7 +97,7 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 
 | Step | Started by | Playbook |
 |---|---|---|
-| Incident created | Automation rule `AR-R4` | PB1 Enrichment (PB2 Notify P2 joins when built) |
+| Incident created | Automation rule `AR-R4` | PB1 Enrichment, PB2 Notify P2 |
 | Contain, only if the user did more than probe | Analyst | PB7 Contain host |
 | Report and close | Analyst | PB8 Report draft, PB9 Close incident |
 
@@ -104,7 +105,7 @@ Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraf
 
 | Step | Started by | Playbook |
 |---|---|---|
-| Incident created | Automation rule `AR-R5` | PB1 Enrichment (PB3 Notify P3 joins when built) |
+| Incident created | Automation rule `AR-R5` | PB1 Enrichment, PB3 Notify P3 |
 | Close at the daily review | Analyst | PB9 Close incident |
 
 #### R1 SSH brute force (P4)
@@ -121,7 +122,8 @@ These role assignments are Terraform in `soar.tf`, so each one is in the plan an
 |---|---|---|
 | PB1 Enrichment | Microsoft Sentinel Responder | `rg-soc-sentinel` |
 | | Key Vault Secrets User (read the AbuseIPDB key) | The playbook Key Vault only |
-| PB2, PB3, PB4 Notify | Microsoft Sentinel Responder (tag, comment). Teams through an API connection | `rg-soc-sentinel` |
+| PB2, PB3, PB4 Notify | Microsoft Sentinel Responder (tag, comment) | `rg-soc-sentinel` |
+| | Key Vault Secrets User (read the Slack webhook URL) | The playbook Key Vault only |
 | PB5 Block IP, PB6 Block expiry | Network Contributor | The `SOAR-Block-Attackers` rule only |
 | | Monitoring Metrics Publisher (write to `SOARBlocks_CL`) | The `dcr-soar-blocks` DCR only |
 | | Microsoft Sentinel Responder (comment; query Trusted_IPs and `SOARBlocks_CL`) | `rg-soc-sentinel` |

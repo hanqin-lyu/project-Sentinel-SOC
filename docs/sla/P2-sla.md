@@ -1,12 +1,12 @@
 # P2 response SLA: suspicious activity
 
-Sent as an attachment with every P2 Teams message from PB2.
+Linked from every P2 Slack message that PB2 posts.
 
 | Item | Value |
 |---|---|
 | Priority | P2, Medium |
 | Rule | R4 Sudo probing: sudo refused a user that is not in sudoers |
-| Channel | Teams message |
+| Channel | Slack message |
 | Acknowledge within | 30 minutes of incident creation |
 | Resolve within | Same day |
 | Automatic steps done before you read this | PB1 enrichment, PB2 P2 tag and due time comment. No block |

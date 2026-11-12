@@ -1,12 +1,12 @@
 # P3 response SLA: follow-up
 
-Sent as an attachment with every P3 Teams message from PB3.
+Linked from every P3 Slack message that PB3 posts.
 
 | Item | Value |
 |---|---|
 | Priority | P3, Low |
 | Rule | R5 Sustained brute force: 50 or more failed SSH logins from one IP in 10 minutes, no successful login in 24 hours |
-| Channel | Teams message |
+| Channel | Slack message |
 | Acknowledge within | The next daily review |
 | Resolve within | Same day as the review |
 | Automatic steps done before you read this | PB1 enrichment, PB3 P3 tag and due time comment. No block |
