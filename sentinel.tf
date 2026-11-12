@@ -147,7 +147,10 @@ resource "azurerm_sentinel_alert_rule_scheduled" "r1_ssh_brute_force" {
     // "Failed password". All three count as a failure. Tune after real data.
     let Trusted = _GetWatchlist('Trusted_IPs') | project SearchKey;
     Syslog
-    | where TimeGenerated > ago(10m)
+    // Count by ingestion time, not event time, so a burst that is ingested late is
+    // not missed when the rule runs. A TimeGenerated window can slide past events
+    // that arrived a minute or two after they happened (see README design notes).
+    | where ingestion_time() > ago(10m)
     | where Facility in ("auth", "authpriv") and ProcessName in ("sshd", "sshd-session")
     | where SyslogMessage has_any ("Failed password", "Invalid user", "Connection closed by authenticating user")
     | extend SourceIP = extract(@"(\d{1,3}(?:\.\d{1,3}){3})", 1, SyslogMessage),
@@ -158,7 +161,7 @@ resource "azurerm_sentinel_alert_rule_scheduled" "r1_ssh_brute_force" {
     | where FailedCount >= 10
   KQL
   query_frequency            = "PT10M"
-  query_period               = "PT10M"
+  query_period               = "PT20M" # > frequency, so events ingested up to 10 min late are still fed to the query
   tactics                    = ["CredentialAccess"]
   techniques                 = ["T1110"]
 
@@ -220,7 +223,10 @@ resource "azurerm_sentinel_alert_rule_scheduled" "r2_compromise_after_brute_forc
         | summarize FailedCount = count(), FirstFail = tostring(min(TimeGenerated)) by SourceIP
         | where FailedCount >= 10;
     SshAuth
-    | where TimeGenerated > ago(10m)
+    // Count by ingestion time, not event time, so a burst that is ingested late is
+    // not missed when the rule runs. A TimeGenerated window can slide past events
+    // that arrived a minute or two after they happened (see README design notes).
+    | where ingestion_time() > ago(10m)
     | where SyslogMessage startswith "Accepted password for "
     | extend User = extract(@"^Accepted password for (\S+) from", 1, SyslogMessage)
     | join kind=inner BruteForcers on SourceIP
@@ -302,7 +308,10 @@ resource "azurerm_sentinel_alert_rule_scheduled" "r4_sudo_probing" {
         | summarize arg_max(TimeGenerated, SourceIP) by User, Computer
         | project User, Computer, SourceIP;
     Syslog
-    | where TimeGenerated > ago(10m)
+    // Count by ingestion time, not event time, so a burst that is ingested late is
+    // not missed when the rule runs. A TimeGenerated window can slide past events
+    // that arrived a minute or two after they happened (see README design notes).
+    | where ingestion_time() > ago(10m)
     | where Facility in ("auth", "authpriv") and ProcessName == "sudo"
     | where SyslogMessage has "NOT in sudoers"
     | extend User = extract(@"^\s*(\S+) : ", 1, SyslogMessage),
@@ -382,7 +391,10 @@ resource "azurerm_sentinel_alert_rule_scheduled" "r5_sustained_brute_force" {
         | where SyslogMessage startswith "Accepted "
         | distinct SourceIP;
     SshAuth
-    | where TimeGenerated > ago(10m)
+    // Count by ingestion time, not event time, so a burst that is ingested late is
+    // not missed when the rule runs. A TimeGenerated window can slide past events
+    // that arrived a minute or two after they happened (see README design notes).
+    | where ingestion_time() > ago(10m)
     | where SyslogMessage has_any ("Failed password", "Invalid user", "Connection closed by authenticating user")
     | extend User = extract(@"(?:Failed password for (?:invalid user )?|Invalid user |authenticating user )(\S+)", 1, SyslogMessage)
     | where SourceIP !in (LoggedIn)
