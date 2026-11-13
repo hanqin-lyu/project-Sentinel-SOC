@@ -94,6 +94,10 @@ locals {
   # the runCommand/action permission.
   run_command_url = "https://management.azure.com${module.vm.resource_id}/runCommand?api-version=2024-07-01"
 
+  # PB10 lists the automation resource group's workflows and their failed runs
+  # through ARM, with the managed identity. Logic App Operator covers the read.
+  logic_workflows_url = "https://management.azure.com/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${data.azurerm_resource_group.automation.name}/providers/Microsoft.Logic/workflows?api-version=2016-06-01"
+
   # The notify playbooks (PB2, PB3, PB4) read the Slack incoming-webhook URL from
   # Key Vault with the managed identity and POST the alert to it. The webhook URL
   # is itself the secret, so the fetch hides its output and the POST hides its
@@ -898,6 +902,151 @@ locals {
         }
       }
     }
+
+    # PB10 (automatic, schedule): the failure handler. Every hour it lists the
+    # automation resource group's playbooks and their runs that failed in the
+    # last hour (skipping itself), and for each one posts a Slack alert and, when
+    # the failed run came from an incident, a comment on that incident. It reads
+    # the failed run's trigger output from the run's SAS link (no auth) to find
+    # the incident; a scheduled playbook like PB6 has none, so that case is Slack
+    # only. Polling, not event-driven: a failure shows within the hour.
+    pb10_failure_handler = {
+      name = "pb10-failure-handler"
+      triggers = {
+        Every_hour = {
+          type       = "Recurrence"
+          recurrence = { frequency = "Hour", interval = 1 }
+        }
+      }
+      parameters = {}
+      actions = {
+        Since = {
+          type     = "Compose"
+          runAfter = {}
+          inputs   = "@{addHours(utcNow(), -1)}"
+        }
+        Get_webhook = {
+          type                 = "Http"
+          runAfter             = {}
+          runtimeConfiguration = { secureData = { properties = ["outputs"] } }
+          inputs = {
+            method         = "GET"
+            uri            = local.slack_webhook_kv_url
+            authentication = local.kv_auth
+          }
+        }
+        List_workflows = {
+          type     = "Http"
+          runAfter = { Since = ["Succeeded"], Get_webhook = ["Succeeded"] }
+          inputs = {
+            method         = "GET"
+            uri            = local.logic_workflows_url
+            authentication = local.arm_auth
+          }
+        }
+        For_each_workflow = {
+          type     = "Foreach"
+          runAfter = { List_workflows = ["Succeeded"] }
+          foreach  = "@body('List_workflows')?['value']"
+          actions = {
+            # Do not report PB10's own runs, or it would alert on itself forever.
+            Not_self = {
+              type = "If"
+              expression = {
+                and = [{ not = { equals = ["@items('For_each_workflow')?['name']", "pb10-failure-handler"] } }]
+              }
+              actions = {
+                List_failed_runs = {
+                  type     = "Http"
+                  runAfter = {}
+                  inputs = {
+                    method = "GET"
+                    uri    = "https://management.azure.com@{items('For_each_workflow')?['id']}/runs"
+                    queries = {
+                      "api-version" = "2016-06-01"
+                      "$filter"     = "status eq 'Failed' and startTime ge @{outputs('Since')}"
+                    }
+                    authentication = local.arm_auth
+                  }
+                }
+                For_each_run = {
+                  type     = "Foreach"
+                  runAfter = { List_failed_runs = ["Succeeded"] }
+                  foreach  = "@body('List_failed_runs')?['value']"
+                  actions = {
+                    # The trigger output holds the incident for an incident-run.
+                    # The link is a short-lived SAS URL, so it needs no auth.
+                    Get_trigger = {
+                      type     = "Http"
+                      runAfter = {}
+                      inputs = {
+                        method = "GET"
+                        uri    = "@{items('For_each_run')?['properties']?['trigger']?['outputsLink']?['uri']}"
+                      }
+                    }
+                    # Empty for a scheduled playbook (no incident).
+                    Incident = {
+                      type     = "Compose"
+                      runAfter = { Get_trigger = ["Succeeded"] }
+                      inputs   = "@{coalesce(body('Get_trigger')?['body']?['object']?['id'], body('Get_trigger')?['object']?['id'], '')}"
+                    }
+                    Send_slack = {
+                      type                 = "Http"
+                      runAfter             = { Incident = ["Succeeded"] }
+                      runtimeConfiguration = { secureData = { properties = ["inputs"] } }
+                      inputs = {
+                        method = "POST"
+                        uri    = "@body('Get_webhook')?['value']"
+                        body = {
+                          text = "Playbook run failed: @{items('For_each_workflow')?['name']}"
+                          blocks = [
+                            {
+                              type = "header"
+                              text = { type = "plain_text", text = "⚠️ Playbook run failed", emoji = true }
+                            },
+                            {
+                              type = "section"
+                              text = {
+                                type = "mrkdwn"
+                                text = "*Playbook:* @{items('For_each_workflow')?['name']}\n*Run:* @{items('For_each_run')?['name']}\n*Started (UTC):* @{items('For_each_run')?['properties']?['startTime']}\n*Status:* Failed"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                    Comment_if_incident = {
+                      type     = "If"
+                      runAfter = { Send_slack = ["Succeeded"] }
+                      expression = {
+                        and = [{ not = { equals = ["@outputs('Incident')", ""] } }]
+                      }
+                      actions = {
+                        Comment_failure = {
+                          type     = "ApiConnection"
+                          runAfter = {}
+                          inputs = {
+                            host   = local.sentinel_host
+                            method = "post"
+                            path   = "/Incidents/Comment"
+                            body = {
+                              incidentArmId = "@outputs('Incident')"
+                              message       = "<p><strong>Playbook failure (PB10).</strong> <code>@{items('For_each_workflow')?['name']}</code> run @{items('For_each_run')?['name']} failed at @{items('For_each_run')?['properties']?['startTime']} (UTC). Check its run history.</p>"
+                            }
+                          }
+                        }
+                      }
+                      else = { actions = {} }
+                    }
+                  }
+                }
+              }
+              else = { actions = {} }
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -1009,10 +1158,9 @@ resource "azurerm_role_assignment" "playbook_block_log" {
 }
 
 locals {
-  # Playbooks that read a secret from the Key Vault. PB10 joins here when it is
-  # built (the Slack webhook URL). PB1 reads the AbuseIPDB key; PB2, PB3 and PB4
-  # read the Slack webhook URL.
-  keyvault_playbooks = toset(["pb1_enrichment", "pb2_notify_p2", "pb3_notify_p3", "pb4_notify_p1"])
+  # Playbooks that read a secret from the Key Vault. PB1 reads the AbuseIPDB key;
+  # PB2, PB3, PB4 and PB10 read the Slack webhook URL.
+  keyvault_playbooks = toset(["pb1_enrichment", "pb2_notify_p2", "pb3_notify_p3", "pb4_notify_p1", "pb10_failure_handler"])
 }
 
 # Read secrets from the playbook Key Vault, and nothing else on it.
@@ -1032,6 +1180,16 @@ resource "azurerm_role_assignment" "playbook_contain_host" {
   scope                = module.vm.resource_id
   role_definition_name = "Virtual Machine Contributor"
   principal_id         = module.playbook["pb7_contain_host"].resource.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+# PB10 lists the automation group's workflows and reads their failed runs. Logic
+# App Operator can read and run workflows but not edit them, scoped to the one
+# resource group that holds the playbooks.
+resource "azurerm_role_assignment" "playbook_failure_reader" {
+  scope                = data.azurerm_resource_group.automation.id
+  role_definition_name = "Logic App Operator"
+  principal_id         = module.playbook["pb10_failure_handler"].resource.identity[0].principal_id
   principal_type       = "ServicePrincipal"
 }
 
