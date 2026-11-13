@@ -2,9 +2,9 @@
 
 How to drive a real SSH brute force against the honeypot and watch the closed loop
 run: detections R1/R2/R4/R5 raise incidents, automation rule `AR-R2` runs PB5
-to block the attacker, and the notifiers PB2/PB3/PB4 tag each incident and post
-it to Slack. Run it from a network **outside** `MANAGEMENT_SOURCE_CIDR`, so you
-never block or trust yourself.
+to block the attacker, and the notifiers PB2/PB3/PB4 comment on each incident and
+post it to Slack. Run it from a network **outside** `MANAGEMENT_SOURCE_CIDR`, so
+you never block or trust yourself.
 
 Validated end to end on 2026-11-12: R1 alerts, R5/R2/R4 incidents, and the PB5
 block (NSG rule + `SOARBlocks_CL` row + incident comment) all fired on real
@@ -83,10 +83,9 @@ never write a real IP in the repo.
    - **Slack.** `#soc-alerts` has one message per incident, with the severity,
      incident number and title, the defanged source IP, and the created time.
      The P2 and P3 messages link the SLA doc; the P1 message says PB5 is blocking.
-   - **Tag.** Each incident carries the matching label (`P1`/`P2`/`P3`). Confirm
-     the label was **added**, not that it replaced an existing one.
    - **Comment.** PB2 comments the acknowledge-by time (30 min from creation);
-     PB3 comments the daily-review target.
+     PB3 comments the daily-review target. (Priority is the incident severity,
+     not a label; see README design notes.)
    - **No secret leak.** Open the playbook run (Logic App run history): the
      `Get_webhook` output and the `Send_slack` input show as secured, so the
      webhook URL is not visible.
@@ -134,4 +133,4 @@ SOARBlocks_CL
 | Rules fired | R1 (alert only), R5, R2, R4 |
 | PB5 | Blocked `[ATTACKER_IP]`: NSG rule + `SOARBlocks_CL` Block row + incident comment, TTL 24 h |
 | PB6 | [to verify after the TTL] |
-| PB2/PB3/PB4 | [to verify: tag added, Slack message in `#soc-alerts`, webhook secured in run history] |
+| PB2/PB3/PB4 | Slack alert in `#soc-alerts` (severity, defanged IP, SLA link), acknowledge comment, webhook secured in run history. No incident label (dropped; see README design notes) |

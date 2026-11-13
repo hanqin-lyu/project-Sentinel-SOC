@@ -9,7 +9,7 @@ Linked from every P2 Slack message that PB2 posts.
 | Channel | Slack message |
 | Acknowledge within | 30 minutes of incident creation |
 | Resolve within | Same day |
-| Automatic steps done before you read this | PB1 enrichment, PB2 P2 tag and due time comment. No block |
+| Automatic steps done before you read this | PB1 enrichment, PB2 acknowledge-by comment, Slack alert. No block |
 
 ## What to do
 

@@ -9,7 +9,7 @@ Linked from every P3 Slack message that PB3 posts.
 | Channel | Slack message |
 | Acknowledge within | The next daily review |
 | Resolve within | Same day as the review |
-| Automatic steps done before you read this | PB1 enrichment, PB3 P3 tag and due time comment. No block |
+| Automatic steps done before you read this | PB1 enrichment, PB3 acknowledge-target comment, Slack alert. No block |
 
 ## What to do
 

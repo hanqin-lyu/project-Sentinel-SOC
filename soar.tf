@@ -182,10 +182,12 @@ locals {
       }
     }
 
-    # PB2 (automatic, AR-R4): the P2 notifier for R4 Sudo probing. Tags the
-    # incident P2, comments the acknowledge-by time (30 minutes from creation),
-    # and posts the alert to Slack with a link to the P2 SLA. The Slack webhook
-    # URL is read from Key Vault at run time and never shown in the run history.
+    # PB2 (automatic, AR-R4): the P2 notifier for R4 Sudo probing. Comments the
+    # acknowledge-by time (30 minutes from creation) and posts the alert to Slack
+    # with a link to the P2 SLA. The Slack webhook URL is read from Key Vault at
+    # run time and never shown in the run history. Priority is carried by the
+    # incident severity, the comment and the Slack message, not an incident label
+    # (see README design notes: Defender-integrated incidents do not hold them).
     pb2_notify_p2 = {
       name       = "pb2-notify-p2"
       triggers   = local.sentinel_incident_trigger
@@ -218,29 +220,16 @@ locals {
           runAfter = {}
           inputs   = "@{addMinutes(${local.incident_props}?['createdTimeUtc'], 30)}"
         }
-        Add_label = {
-          type     = "ApiConnection"
-          runAfter = {}
-          inputs = {
-            host   = local.sentinel_host
-            method = "put"
-            path   = "/Incidents"
-            body = {
-              incidentArmId = local.incident_id
-              labels        = [{ labelName = "P2", labelType = "User" }]
-            }
-          }
-        }
         Comment_due = {
           type     = "ApiConnection"
-          runAfter = { Due_time = ["Succeeded"], Add_label = ["Succeeded"] }
+          runAfter = { Due_time = ["Succeeded"] }
           inputs = {
             host   = local.sentinel_host
             method = "post"
             path   = "/Incidents/Comment"
             body = {
               incidentArmId = local.incident_id
-              message       = "<p><strong>Tagged P2 by PB2.</strong> Acknowledge by @{outputs('Due_time')} (UTC, 30 min from creation); resolve same day. SLA: docs/sla/P2-sla.md.</p>"
+              message       = "<p><strong>Priority P2 (PB2).</strong> Acknowledge by @{outputs('Due_time')} (UTC, 30 min from creation); resolve same day. SLA: docs/sla/P2-sla.md.</p>"
             }
           }
         }
@@ -287,10 +276,11 @@ locals {
       }
     }
 
-    # PB3 (automatic, AR-R5): the P3 notifier for R5 Sustained brute force. Tags
-    # the incident P3, comments the acknowledge target, and posts the alert to
-    # Slack with a link to the P3 SLA. P3 has no clock deadline (it is handled at
-    # the next daily review), so the comment states that target as text.
+    # PB3 (automatic, AR-R5): the P3 notifier for R5 Sustained brute force.
+    # Comments the acknowledge target and posts the alert to Slack with a link to
+    # the P3 SLA. P3 has no clock deadline (it is handled at the next daily
+    # review), so the comment states that target as text. Priority is carried by
+    # severity, the comment and Slack, not an incident label (see PB2).
     pb3_notify_p3 = {
       name       = "pb3-notify-p3"
       triggers   = local.sentinel_incident_trigger
@@ -317,29 +307,16 @@ locals {
           runAfter = { IP_addresses = ["Succeeded"] }
           inputs   = "@{replace(join(take(body('IP_addresses'), 1), ''), '''', '')}"
         }
-        Add_label = {
-          type     = "ApiConnection"
-          runAfter = {}
-          inputs = {
-            host   = local.sentinel_host
-            method = "put"
-            path   = "/Incidents"
-            body = {
-              incidentArmId = local.incident_id
-              labels        = [{ labelName = "P3", labelType = "User" }]
-            }
-          }
-        }
         Comment_due = {
           type     = "ApiConnection"
-          runAfter = { Add_label = ["Succeeded"] }
+          runAfter = {}
           inputs = {
             host   = local.sentinel_host
             method = "post"
             path   = "/Incidents/Comment"
             body = {
               incidentArmId = local.incident_id
-              message       = "<p><strong>Tagged P3 by PB3.</strong> Acknowledge at the next daily review; resolve same day. SLA: docs/sla/P3-sla.md.</p>"
+              message       = "<p><strong>Priority P3 (PB3).</strong> Acknowledge at the next daily review; resolve same day. SLA: docs/sla/P3-sla.md.</p>"
             }
           }
         }
@@ -386,9 +363,9 @@ locals {
     }
 
     # PB4 (automatic, AR-R2): the P1 notifier for R2 Compromise after brute
-    # force. Tags the incident P1 and posts the alert to Slack. PB5 blocks the IP
-    # on the same incident, so this is notification only; there is no SLA doc for
-    # P1 (act now).
+    # force. Posts the alert to Slack. PB5 blocks the IP on the same incident, so
+    # this is notification only; there is no SLA doc for P1 (act now). Priority is
+    # carried by severity and the Slack message, not an incident label (see PB2).
     pb4_notify_p1 = {
       name       = "pb4-notify-p1"
       triggers   = local.sentinel_incident_trigger
@@ -414,19 +391,6 @@ locals {
           type     = "Compose"
           runAfter = { IP_addresses = ["Succeeded"] }
           inputs   = "@{replace(join(take(body('IP_addresses'), 1), ''), '''', '')}"
-        }
-        Add_label = {
-          type     = "ApiConnection"
-          runAfter = {}
-          inputs = {
-            host   = local.sentinel_host
-            method = "put"
-            path   = "/Incidents"
-            body = {
-              incidentArmId = local.incident_id
-              labels        = [{ labelName = "P1", labelType = "User" }]
-            }
-          }
         }
         Get_webhook = {
           type                 = "Http"
