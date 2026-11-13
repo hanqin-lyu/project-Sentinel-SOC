@@ -87,6 +87,13 @@ locals {
   block_log_url  = "${module.dce_soar.logs_ingestion_endpoint}/dataCollectionRules/${module.dcr_soar_blocks.resource.output.properties.immutableId}/streams/Custom-SOARBlocks_CL?api-version=2023-01-01"
   block_log_auth = { type = "ManagedServiceIdentity", audience = "https://monitor.azure.com" }
 
+  # PB7 runs a shell script on the honeypot VM through the Azure Run Command
+  # action (control plane, so it works even with egress locked). The action is
+  # asynchronous; the HTTP action follows the operation and the command output
+  # comes back in value[0].message. Virtual Machine Contributor on the VM covers
+  # the runCommand/action permission.
+  run_command_url = "https://management.azure.com${module.vm.resource_id}/runCommand?api-version=2024-07-01"
+
   # The notify playbooks (PB2, PB3, PB4) read the Slack incoming-webhook URL from
   # Key Vault with the managed identity and POST the alert to it. The webhook URL
   # is itself the secret, so the fetch hides its output and the POST hides its
@@ -714,6 +721,105 @@ locals {
       }
     }
 
+    # PB7 (manual): contain the host. End the compromised account's sessions and
+    # lock it on the honeypot VM through Run Command. The account comes from the
+    # incident's Account entity (R2 and R4 both map it), so no decoy name is in
+    # the repo. The name is validated against a safe charset before it reaches the
+    # shell. This is a disruptive step, so it is a manual playbook the analyst
+    # runs from the incident, never automatic.
+    pb7_contain_host = {
+      name       = "pb7-contain-host"
+      triggers   = local.sentinel_incident_trigger
+      parameters = {}
+      actions = {
+        Account_entities = {
+          type     = "Query"
+          runAfter = {}
+          inputs = {
+            from  = "@${local.incident_props}?['relatedEntities']"
+            where = "@equals(item()?['kind'], 'Account')"
+          }
+        }
+        Account_names = {
+          type     = "Select"
+          runAfter = { Account_entities = ["Succeeded"] }
+          inputs = {
+            from   = "@body('Account_entities')"
+            select = "@item()?['properties']?['friendlyName']"
+          }
+        }
+        # One account per incident. Quotes are stripped as the value goes into a
+        # shell script.
+        Account = {
+          type     = "Compose"
+          runAfter = { Account_names = ["Succeeded"] }
+          inputs   = "@{replace(join(take(body('Account_names'), 1), ''), '''', '')}"
+        }
+        Contain_or_skip = {
+          type     = "If"
+          runAfter = { Account = ["Succeeded"] }
+          expression = {
+            and = [{ not = { equals = ["@outputs('Account')", ""] } }]
+          }
+          actions = {
+            # Run Command runs the script as root. The account name is validated
+            # against a safe charset first, so a crafted name cannot inject shell.
+            # Lock the password, take away the shell, then kill every session.
+            Run_command = {
+              type     = "Http"
+              runAfter = {}
+              inputs = {
+                method         = "POST"
+                uri            = local.run_command_url
+                authentication = local.arm_auth
+                body = {
+                  commandId = "RunShellScript"
+                  script = [
+                    "USER='@{outputs('Account')}'",
+                    "case \"$USER\" in *[!a-zA-Z0-9._-]*|'') echo \"PB7: refusing unsafe account name\"; exit 1;; esac",
+                    "usermod -L \"$USER\" 2>/dev/null || true",
+                    "usermod -s /usr/sbin/nologin \"$USER\" 2>/dev/null || true",
+                    "pkill -KILL -u \"$USER\" 2>/dev/null || true",
+                    "echo \"PB7 contained $USER: password locked, shell set to nologin, sessions killed\""
+                  ]
+                }
+              }
+            }
+            Comment_contained = {
+              type     = "ApiConnection"
+              runAfter = { Run_command = ["Succeeded"] }
+              inputs = {
+                host   = local.sentinel_host
+                method = "post"
+                path   = "/Incidents/Comment"
+                body = {
+                  incidentArmId = local.incident_id
+                  message       = "<p><strong>Contained by PB7.</strong> Ran Run Command on the honeypot VM for account <code>@{outputs('Account')}</code>. Output:</p><pre>@{body('Run_command')?['value'][0]['message']}</pre>"
+                }
+              }
+            }
+          }
+          else = {
+            actions = {
+              Comment_no_account = {
+                type     = "ApiConnection"
+                runAfter = {}
+                inputs = {
+                  host   = local.sentinel_host
+                  method = "post"
+                  path   = "/Incidents/Comment"
+                  body = {
+                    incidentArmId = local.incident_id
+                    message       = "<p><strong>PB7 did not contain.</strong> No account entity on this incident.</p>"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     # PB8 (manual): post the incident facts as a comment to start the triage
     # report. IPs are defanged, as in the triage reports.
     pb8_report_draft = {
@@ -916,6 +1022,16 @@ resource "azurerm_role_assignment" "playbook_keyvault_reader" {
   scope                = module.key_vault.resource_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = module.playbook[each.key].resource.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+# PB7 runs a script on the honeypot VM with Run Command. Virtual Machine
+# Contributor includes the runCommand/action permission; the scope is the one VM,
+# so PB7 can reach no other resource.
+resource "azurerm_role_assignment" "playbook_contain_host" {
+  scope                = module.vm.resource_id
+  role_definition_name = "Virtual Machine Contributor"
+  principal_id         = module.playbook["pb7_contain_host"].resource.identity[0].principal_id
   principal_type       = "ServicePrincipal"
 }
 

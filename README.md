@@ -56,7 +56,7 @@ CI runs on every pull request, and `Terraform Plan Preview` is a required check 
 
 ## Playbooks
 
-Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB1, PB2, PB3, PB4, PB5, PB6, PB8 and PB9, a Key Vault for playbook secrets, and the automation rules AR-R2, AR-R4 and AR-R5 are built. AR-R2 runs PB1, PB5 and PB4; AR-R4 runs PB1 and PB2; AR-R5 runs PB1 and PB3. PB1, PB2, PB3, PB4, PB5, PB8 and PB9 are tested with real incidents; PB6's unblock is verified after the 24-hour TTL. The rest are planned.
+Logic Apps playbooks and automation rules for Microsoft Sentinel, kept as Terraform in `soar.tf`. PB1, PB2, PB3, PB4, PB5, PB6, PB7, PB8 and PB9, a Key Vault for playbook secrets, and the automation rules AR-R2, AR-R4 and AR-R5 are built. AR-R2 runs PB1, PB5 and PB4; AR-R4 runs PB1 and PB2; AR-R5 runs PB1 and PB3. PB1, PB2, PB3, PB4, PB5, PB8 and PB9 are tested with real incidents; PB6's unblock is verified after the 24-hour TTL; PB7 (manual) is run from the incident when an analyst decides to contain. PB10 and the workbook are planned.
 
 ### Rules
 
