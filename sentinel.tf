@@ -574,6 +574,9 @@ locals {
             SecurityIncident
             | where TimeGenerated > ago(30d)
             | summarize arg_max(TimeGenerated, Severity) by IncidentNumber
+            // The rules only raise High (R2), Medium (R4) and Low (R5); an
+            // Informational incident is a stray test or manual one, so drop it.
+            | where Severity != "Informational"
             | summarize Count = count() by Severity
           KQL
         }
@@ -587,11 +590,12 @@ locals {
           size          = 0
           queryType     = 0
           resourceType  = "microsoft.operationalinsights/workspaces"
-          visualization = "timechart"
+          visualization = "barchart"
           query         = <<-KQL
             SecurityIncident
             | where TimeGenerated > ago(30d)
             | summarize arg_min(TimeGenerated, Severity) by IncidentNumber
+            | where Severity != "Informational"
             | summarize Count = count() by bin(TimeGenerated, 1d), Severity
           KQL
         }
