@@ -90,6 +90,58 @@ never write a real IP in the repo.
      `Get_webhook` output and the `Send_slack` input show as secured, so the
      webhook URL is not visible.
 
+## Verify PB10 (force a failure)
+
+PB10 only acts when a playbook run fails, so there is nothing to see until you
+make one fail. Drive this from the CLI: the Defender portal's run-detail pages
+are slow and hang, and `az rest` resubmits and trigger-runs are reliable. Break
+PB1 by disabling its Key Vault secret, resubmit a past PB1 run so it fails on the
+disabled secret, re-enable the secret, then run PB10 now instead of waiting for
+its hourly tick.
+
+```bash
+SUB=$(az account show --query id -o tsv)
+RG=rg-core-automation
+VAULT=<key vault name>   # kv-socsoar-...
+WF="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Logic/workflows"
+
+# 1. Disable the AbuseIPDB secret so PB1's Get_api_key step fails.
+az keyvault secret set-attributes --vault-name "$VAULT" --name abuseipdb-api-key --enabled false
+
+# 2. Resubmit PB1's most recent incident-trigger run; it now fails on the secret.
+H=$(az rest --method get \
+  --url "$WF/pb1-enrichment/triggers/Microsoft_Sentinel_incident/histories?api-version=2016-06-01" \
+  --query 'value[0].name' -o tsv)
+az rest --method post \
+  --url "$WF/pb1-enrichment/triggers/Microsoft_Sentinel_incident/histories/$H/resubmit?api-version=2016-06-01"
+
+# 3. Re-enable the secret right away, so real PB1 runs work again.
+az keyvault secret set-attributes --vault-name "$VAULT" --name abuseipdb-api-key --enabled true
+
+# 4. Run PB10 now instead of waiting for the hourly recurrence.
+az rest --method post \
+  --url "$WF/pb10-failure-handler/triggers/Every_hour/run?api-version=2016-06-01"
+```
+
+Wait a moment, then check both outputs:
+
+- **Slack.** `#soc-alerts` has a **⚠️ Playbook run failed** message naming
+  `pb1-enrichment`, the run id, the start time and `Failed`.
+- **Comment.** The incident PB1 failed on carries a PB10 failure comment:
+
+  ```kql
+  SecurityIncident
+  | where TimeGenerated > ago(1h)
+  | mv-expand Comments
+  | extend msg = tostring(Comments.message)
+  | where msg has "Playbook failure (PB10)"
+  | project TimeGenerated, IncidentNumber, msg
+  | order by TimeGenerated desc
+  ```
+
+PB10 does not deduplicate across runs, so triggering it twice comments twice on
+the same failure; that is expected.
+
 ## Queries
 
 **Did the failures and the success share one IP? (run before expecting R2)**
@@ -134,3 +186,5 @@ SOARBlocks_CL
 | PB5 | Blocked `[ATTACKER_IP]`: NSG rule + `SOARBlocks_CL` Block row + incident comment, TTL 24 h |
 | PB6 | [to verify after the TTL] |
 | PB2/PB3/PB4 | Slack alert in `#soc-alerts` (severity, defanged IP, SLA link), acknowledge comment, webhook secured in run history. No incident label (dropped; see README design notes) |
+| PB7 | [to verify: manual Run playbook locks the incident's account on the VM, Run Command output in a comment] |
+| PB10 | Forced a PB1 failure: `#soc-alerts` "⚠️ Playbook run failed" (pb1-enrichment) + PB10 failure comment on the incident |
