@@ -162,3 +162,41 @@ flowchart LR
 | Security Reader | Microsoft Sentinel Reader | Change anything |
 | SOC Responder | Microsoft Sentinel Reader; Microsoft Sentinel Playbook Operator on PB7, PB8, PB9 only | Run automatic playbooks; edit incidents, the NSG or the VM directly |
 | Owner | Owner, used only to fix the lab when something breaks | |
+
+## Workbook
+
+`sentinel.tf` builds the **SOC closed-loop overview** workbook (an Azure Monitor workbook, `category = "sentinel"`, bound to the workspace). It is a read-only view over the tables the rules and playbooks already write, so it needs no new data.
+
+**Open it:** Defender portal → Microsoft Sentinel → **Workbooks** → **My workbooks** → *SOC closed-loop overview* → View (or the Azure portal: Sentinel → Workbooks).
+
+**Panels:**
+
+| Panel | Source | Shows |
+|---|---|---|
+| Incidents by severity (30d) | `SecurityIncident` | Count of incidents by P1/P2/P3 (High/Medium/Low) |
+| New incidents over time (30d) | `SecurityIncident` | New incidents per day, split by severity |
+| Active blocks | `SOARBlocks_CL` | IPs currently blocked, with their expiry |
+| Block and unblock activity (30d) | `SOARBlocks_CL` | Every PB5 block and PB6 unblock |
+| SSH failed logins per hour (7d) | `Syslog` | Brute-force volume over time |
+| Top source IPs (7d) | `Syslog` | The ten noisiest attacker IPs |
+
+**Verify without the portal:** each panel is one query, so run the panel's KQL in Advanced Hunting to confirm it returns rows; if the query has data, the panel renders. For example, the block view:
+
+```kql
+SOARBlocks_CL
+| summarize arg_max(TimeGenerated, Action, ExpiresAt) by IPAddress
+| where Action == "Block" and ExpiresAt > now()
+| project IPAddress, BlockedSince = TimeGenerated, ExpiresAt
+```
+
+and the brute-force view:
+
+```kql
+Syslog
+| where TimeGenerated > ago(7d)
+| where Facility in ("auth", "authpriv") and ProcessName in ("sshd", "sshd-session")
+| where SyslogMessage has_any ("Failed password", "Invalid user", "Connection closed by authenticating user")
+| summarize Failures = count() by bin(TimeGenerated, 1h)
+```
+
+A panel with no rows yet (for example active blocks after PB6 has expired them) is expected, not a failure.
