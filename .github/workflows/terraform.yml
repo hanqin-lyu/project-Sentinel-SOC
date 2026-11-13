@@ -16,6 +16,12 @@ on:
       - "*.tf"
       - ".terraform.lock.hcl"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "apply or destroy"
+        type: choice
+        options: [apply, destroy]
+        default: apply
 
 permissions:
   contents: read
@@ -143,7 +149,11 @@ jobs:
 
   terraform-apply:
     name: "Terraform Apply"
-    if: github.event_name != 'pull_request'
+    # Runs on push to main and on a manual "apply" dispatch, but not on a
+    # "destroy" dispatch (that goes to terraform-destroy below).
+    if: >-
+      github.event_name != 'pull_request' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.mode == 'destroy')
     runs-on: ubuntu-latest
     # Manual approval gate: Required reviewers on this environment in GitHub.
     # The CD identity's federated credential only matches this environment.
@@ -168,3 +178,34 @@ jobs:
 
       - name: Terraform apply
         run: terraform apply -input=false -no-color -auto-approve
+
+  terraform-destroy:
+    name: "Terraform Destroy"
+    # Manual only: Actions -> Terraform -> Run workflow -> mode = destroy.
+    # Removes the billable resources; the three resource groups are data
+    # sources, not managed here, so destroy leaves them in place. See
+    # docs/teardown.md.
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'destroy'
+    runs-on: ubuntu-latest
+    # Same approval gate and CD identity as apply.
+    environment: production-demo
+    # Serialise against the same state as plan and apply.
+    concurrency:
+      group: terraform
+      cancel-in-progress: false
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CD_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_CD_TENANT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false $BACKEND_CONFIG
+
+      - name: Terraform destroy
+        run: terraform destroy -input=false -no-color -auto-approve
