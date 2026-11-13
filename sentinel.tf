@@ -539,3 +539,152 @@ module "dcr_soar_blocks" {
   # The table must exist before a DCR can send to it.
   depends_on = [azurerm_log_analytics_workspace_table_custom_log.soar_blocks]
 }
+
+# ---------------------------------------------------------------------------
+# Workbook
+# ---------------------------------------------------------------------------
+# The SOC overview workbook, shown under Sentinel. It reads the same tables the
+# rules and playbooks use: SecurityIncident for the incident view, Syslog for
+# the brute-force view, and the SOARBlocks_CL custom table for the block view.
+# The definition is a Monitor workbook JSON built with jsonencode so it stays
+# valid; each panel's KQL is a heredoc. source_id binds it to the workspace, and
+# category "sentinel" makes it appear in the Sentinel workbooks gallery.
+locals {
+  workbook_json = jsonencode({
+    version = "Notebook/1.0"
+    items = [
+      {
+        type = 1
+        name = "title"
+        content = {
+          json = "# SOC closed-loop overview\nHoneypot detections, automated response and containment. Incidents from `SecurityIncident`, brute force from `Syslog`, blocks from `SOARBlocks_CL`."
+        }
+      },
+      {
+        type = 3
+        name = "incidents-by-severity"
+        content = {
+          version       = "KqlItem/1.0"
+          title         = "Incidents by severity (30d)"
+          size          = 1
+          queryType     = 0
+          resourceType  = "microsoft.operationalinsights/workspaces"
+          visualization = "piechart"
+          query         = <<-KQL
+            SecurityIncident
+            | where TimeGenerated > ago(30d)
+            | summarize arg_max(TimeGenerated, Severity) by IncidentNumber
+            | summarize Count = count() by Severity
+          KQL
+        }
+      },
+      {
+        type = 3
+        name = "incidents-over-time"
+        content = {
+          version       = "KqlItem/1.0"
+          title         = "New incidents over time (30d)"
+          size          = 0
+          queryType     = 0
+          resourceType  = "microsoft.operationalinsights/workspaces"
+          visualization = "timechart"
+          query         = <<-KQL
+            SecurityIncident
+            | where TimeGenerated > ago(30d)
+            | summarize arg_min(TimeGenerated, Severity) by IncidentNumber
+            | summarize Count = count() by bin(TimeGenerated, 1d), Severity
+          KQL
+        }
+      },
+      {
+        type = 3
+        name = "active-blocks"
+        content = {
+          version       = "KqlItem/1.0"
+          title         = "Active blocks (not yet expired)"
+          size          = 0
+          queryType     = 0
+          resourceType  = "microsoft.operationalinsights/workspaces"
+          visualization = "table"
+          query         = <<-KQL
+            SOARBlocks_CL
+            | summarize arg_max(TimeGenerated, Action, ExpiresAt) by IPAddress
+            | where Action == "Block" and ExpiresAt > now()
+            | project IPAddress, BlockedSince = TimeGenerated, ExpiresAt
+            | order by ExpiresAt asc
+          KQL
+        }
+      },
+      {
+        type = 3
+        name = "block-activity"
+        content = {
+          version       = "KqlItem/1.0"
+          title         = "Block and unblock activity (30d)"
+          size          = 0
+          queryType     = 0
+          resourceType  = "microsoft.operationalinsights/workspaces"
+          visualization = "table"
+          query         = <<-KQL
+            SOARBlocks_CL
+            | where TimeGenerated > ago(30d)
+            | project TimeGenerated, IPAddress, Action, Playbook
+            | order by TimeGenerated desc
+          KQL
+        }
+      },
+      {
+        type = 3
+        name = "brute-force-volume"
+        content = {
+          version       = "KqlItem/1.0"
+          title         = "SSH failed logins per hour (7d)"
+          size          = 0
+          queryType     = 0
+          resourceType  = "microsoft.operationalinsights/workspaces"
+          visualization = "timechart"
+          query         = <<-KQL
+            Syslog
+            | where TimeGenerated > ago(7d)
+            | where Facility in ("auth", "authpriv") and ProcessName in ("sshd", "sshd-session")
+            | where SyslogMessage has_any ("Failed password", "Invalid user", "Connection closed by authenticating user")
+            | summarize Failures = count() by bin(TimeGenerated, 1h)
+          KQL
+        }
+      },
+      {
+        type = 3
+        name = "top-source-ips"
+        content = {
+          version       = "KqlItem/1.0"
+          title         = "Top source IPs by SSH attempts (7d)"
+          size          = 0
+          queryType     = 0
+          resourceType  = "microsoft.operationalinsights/workspaces"
+          visualization = "barchart"
+          query         = <<-KQL
+            Syslog
+            | where TimeGenerated > ago(7d)
+            | where Facility in ("auth", "authpriv") and ProcessName in ("sshd", "sshd-session")
+            | extend SourceIP = extract(@"(\d{1,3}(?:\.\d{1,3}){3})", 1, SyslogMessage)
+            | where isnotempty(SourceIP)
+            | summarize Attempts = count() by SourceIP
+            | top 10 by Attempts
+          KQL
+        }
+      }
+    ]
+    "$schema" = "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+  })
+}
+
+# The name must be a GUID; it is fixed so the workbook keeps its ID.
+resource "azurerm_application_insights_workbook" "soc" {
+  name                = "7c1f9a84-3e6d-4b52-9f0a-2d7c8b1e6a43"
+  resource_group_name = data.azurerm_resource_group.sentinel.name
+  location            = local.location
+  display_name        = "SOC closed-loop overview"
+  source_id           = lower(module.workspace.resource_id)
+  category            = "sentinel"
+  data_json           = local.workbook_json
+}
